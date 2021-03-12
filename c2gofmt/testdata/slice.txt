@@ -1,0 +1,9 @@
+int f(char **p) {
+	return p[1][2];
+}
+---
+package pkg
+
+func f(p [][]C.char) int {
+	return p[1][2]
+}

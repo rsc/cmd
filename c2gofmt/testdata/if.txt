@@ -1,0 +1,29 @@
+void f(void) {
+	int z;
+	if(x == 0)
+		g();
+	else if(x == 1)
+		h();
+	else if(x == 2)
+		i();
+	else if(x == 3)
+		j();
+	else
+		z = k();
+}
+---
+package pkg
+
+func f() {
+	if x == 0 {
+		g()
+	} else if x == 1 {
+		h()
+	} else if x == 2 {
+		i()
+	} else if x == 3 {
+		j()
+	} else {
+		z := k()
+	}
+}

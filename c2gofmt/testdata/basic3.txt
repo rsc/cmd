@@ -1,0 +1,11 @@
+#pragma 1
+#pragma 2
+
+int f; /* comment */
+---
+// #pragma 1
+// #pragma 2
+
+package pkg
+
+var f int /* comment */

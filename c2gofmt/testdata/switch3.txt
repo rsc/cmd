@@ -1,0 +1,44 @@
+void
+f(void)
+{
+	switch(1){
+	case 1:
+		if((c = f()) != 0)
+			g();
+		break;
+
+	case 2:
+		if((c = g()) != 0)
+			h();
+
+	case 3:
+		if((c = h()) != 0)
+			i();
+		break;
+	}
+}
+---
+package pkg
+
+func f() {
+	switch 1 {
+	case 1:
+		c = f()
+		if c != 0 {
+			g()
+		}
+
+	case 2:
+		c = g()
+		if c != 0 {
+			h()
+		}
+		fallthrough
+
+	case 3:
+		c = h()
+		if c != 0 {
+			i()
+		}
+	}
+}

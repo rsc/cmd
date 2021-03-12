@@ -1,0 +1,16 @@
+int
+f(void)
+{
+	static int x;
+	x++;
+	return x;
+}
+---
+package pkg
+
+var f_x int
+
+func f() int {
+	f_x++
+	return f_x
+}

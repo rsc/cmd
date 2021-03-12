@@ -1,0 +1,24 @@
+Rune*
+rload(Rasp *r, ulong p0, ulong p1, ulong *nrp)
+{
+	Section *s;
+	long p;
+	int n, nb;
+
+	nb = 0;
+	for(p=0,s=r->sect; s && p+s->nrunes<=p0; s=s->next)
+		p += s->nrunes;
+	return 0;
+}
+---
+package pkg
+
+func rload(r *Rasp, p0 ulong, p1 ulong, nrp *ulong) *Rune {
+	nb := 0
+	p := 0
+	s := r.sect
+	for ; s != nil && p+s.nrunes <= p0; s = s.next {
+		p += s.nrunes
+	}
+	return 0
+}

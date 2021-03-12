@@ -1,0 +1,26 @@
+enum {
+	X = 1,
+	Y,
+	Z,
+};
+enum E {
+	E0,
+	E1,
+	E2,
+};
+---
+package pkg
+
+const (
+	X = 1 + iota
+	Y
+	Z
+)
+
+type E int
+
+const (
+	E0 E = iota
+	E1
+	E2
+)

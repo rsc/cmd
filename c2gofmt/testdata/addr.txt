@@ -1,0 +1,11 @@
+void f(void) {
+	XMethod(&x, y);
+	XMethod(*x, y);
+}
+---
+package pkg
+
+func f() {
+	x.Method(y)
+	x.Method(y)
+}

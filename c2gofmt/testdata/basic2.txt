@@ -1,0 +1,11 @@
+int f; /* comment */
+int g;
+
+int h;
+---
+package pkg
+
+var f int /* comment */
+var g int
+
+var h int

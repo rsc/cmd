@@ -1,0 +1,24 @@
+typedef struct S S;
+typedef struct T T;
+
+struct S {
+	int x;
+};
+
+int z;
+
+struct T {
+	int y;
+};
+---
+package pkg
+
+type S struct {
+	x int
+}
+
+var z int
+
+type T struct {
+	y int
+}

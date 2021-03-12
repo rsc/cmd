@@ -1,0 +1,65 @@
+void f(void) {
+	if((c = g()) != 0) {
+		z();
+	}
+
+	if(x && (c = g()) != 0) {
+		z();
+	}
+
+	if(x && (c = g()) != 0) {
+		z();
+	} else {
+		y();
+	}
+
+	while((c = g()) != 0) {
+		z();
+	}
+
+	for(x = 1; x && (c = g()) != 0 && (d = h()) > 0; x++) {
+		z();
+	}
+}
+---
+package pkg
+
+func f() {
+	c = g()
+	if c != 0 {
+		z()
+	}
+
+	if x != 0 {
+		c = g()
+		if c != 0 {
+			z()
+		}
+	}
+
+	if x != 0 && func() bool { c = g(); return c != 0 }() {
+		z()
+	} else {
+		y()
+	}
+
+	for {
+		c = g()
+		if c == 0 {
+			break
+		}
+		z()
+	}
+
+	for x = 1; x != 0; x++ {
+		c = g()
+		if c == 0 {
+			break
+		}
+		d = h()
+		if d <= 0 {
+			break
+		}
+		z()
+	}
+}

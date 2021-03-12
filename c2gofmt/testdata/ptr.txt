@@ -1,0 +1,11 @@
+int *f(int *p) {
+	p = 0;
+	return p;
+}
+---
+package pkg
+
+func f(p *int) *int {
+	p = nil
+	return p
+}

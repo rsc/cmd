@@ -1,0 +1,18 @@
+void
+f(void)
+{
+	if(x)
+		g();
+	else /* comment */
+		h();
+}
+---
+package pkg
+
+func f() {
+	if x != 0 {
+		g()
+	} else { /* comment */
+		h()
+	}
+}

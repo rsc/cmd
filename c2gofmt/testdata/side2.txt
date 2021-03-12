@@ -1,0 +1,13 @@
+void f(void) {
+	c = *p++;
+	int d = *p++;
+}
+---
+package pkg
+
+func f() {
+	c = *p
+	p++
+	d := *p
+	p++
+}

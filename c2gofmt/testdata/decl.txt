@@ -1,0 +1,44 @@
+int f(void) {
+	int x, y;
+
+	x = 1;
+	y = 2;
+	return x + y;
+}
+
+int g(void) {
+	int x, y;
+	int z = 3;
+
+	y = 1;
+	if(y) {
+		x = f();
+		return x;
+	} else {
+		x = f() + f();
+		return x;
+	}
+	return 2 + z;
+}
+---
+package pkg
+
+func f() int {
+	x := 1
+	y := 2
+	return x + y
+}
+
+func g() int {
+	z := 3
+
+	y := 1
+	if y != 0 {
+		x := f()
+		return x
+	} else {
+		x := f() + f()
+		return x
+	}
+	return 2 + z
+}

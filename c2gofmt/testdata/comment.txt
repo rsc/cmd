@@ -1,0 +1,11 @@
+void
+f(void)
+{	/* comment */
+	g();
+}
+---
+package pkg
+
+func f() { /* comment */
+	g()
+}

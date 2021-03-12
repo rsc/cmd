@@ -1,0 +1,9 @@
+int f(Rectangle r) {
+	return r.min.x + r.min.y + r.something;
+}
+---
+package pkg
+
+func f(r Rectangle) int {
+	return r.Min.X + r.Min.Y + r.something
+}

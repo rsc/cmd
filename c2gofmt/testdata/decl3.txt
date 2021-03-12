@@ -1,0 +1,19 @@
+int f(void) {
+	int x, y;
+
+	y = 0;
+	for(x=0; x<10; x++) {
+		y += x;
+	}
+	return y;
+}
+---
+package pkg
+
+func f() int {
+	y := 0
+	for x := 0; x < 10; x++ {
+		y += x
+	}
+	return y
+}

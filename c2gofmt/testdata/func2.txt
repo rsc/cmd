@@ -1,0 +1,9 @@
+void f(void) {
+	(*g)();
+}
+---
+package pkg
+
+func f() {
+	g()
+}

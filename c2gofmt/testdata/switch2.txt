@@ -1,0 +1,32 @@
+void
+f(void)
+{
+	switch(1){
+	case 1:
+		f();
+		break;
+
+	case 2:
+		g();
+
+	case 3:
+		h();
+		break;
+	}
+}
+---
+package pkg
+
+func f() {
+	switch 1 {
+	case 1:
+		f()
+
+	case 2:
+		g()
+		fallthrough
+
+	case 3:
+		h()
+	}
+}

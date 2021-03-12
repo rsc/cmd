@@ -1,0 +1,17 @@
+extern int a;
+
+// comment
+#define X Y
+
+// more comment
+extern int b;
+---
+package pkg
+
+/* extern var a int */
+
+// comment
+// #define X Y
+
+// more comment
+/* extern var b int */
