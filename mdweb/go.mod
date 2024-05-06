@@ -1,4 +1,4 @@
-module rsc.io/mdweb
+module rsc.io/cmd/mdweb
 
 go 1.21.9
 

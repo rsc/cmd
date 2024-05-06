@@ -1,5 +1,12 @@
-// Mdweb
-
+// Mdweb serves rendered Markdown from the current directory on localhost:8780.
+//
+// Usage:
+//
+//	mdweb [-a addr] [-r root]
+//
+// The -a flag sets a different service address (default localhost:8780).
+//
+// The -r flag sets a different root directory to serve (default current directory).
 package main
 
 import (
@@ -43,6 +50,7 @@ func main() {
 	dir = http.Dir(*root)
 	fs = http.FileServer(dir)
 	http.HandleFunc("/", md)
+	fmt.Fprintf(os.Stderr, "mdweb: serving %s on http://%s\n", *root, *addr)
 	log.Fatal(http.ListenAndServe(*addr, nil))
 }
 
