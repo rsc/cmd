@@ -10,10 +10,9 @@
 package main
 
 import (
-	"bytes"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -102,6 +101,7 @@ func md(w http.ResponseWriter, req *http.Request) {
 	}
 	doc := p.Parse(string(data))
 	html := markdown.ToHTML(doc)
+	w.Write([]byte(`<!DOCTYPE html>`))
 	w.Write([]byte(html))
 }
 
