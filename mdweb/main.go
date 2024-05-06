@@ -1,16 +1,5 @@
-// Copyright 2021 The Go Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+// Mdweb
 
-// Mdweb serves rendered Markdown from the current directory on localhost:8780.
-//
-// Usage:
-//
-//	mdweb [-a addr] [-r root]
-//
-// The -a flag sets a different service address (default localhost:8780).
-//
-// The -r flag sets a different root directory to serve (default current directory).
 package main
 
 import (
@@ -24,9 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yuin/goldmark"
-	"github.com/yuin/goldmark/renderer/html"
-	"github.com/yuin/goldmark/text"
+	"rsc.io/markdown"
 )
 
 var (
@@ -56,8 +43,6 @@ func main() {
 	dir = http.Dir(*root)
 	fs = http.FileServer(dir)
 	http.HandleFunc("/", md)
-
-	fmt.Fprintf(os.Stderr, "mdweb: serving %s on http://%s\n", *root, *addr)
 	log.Fatal(http.ListenAndServe(*addr, nil))
 }
 
@@ -88,23 +73,28 @@ func md(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	data, err := ioutil.ReadAll(f)
+	data, err := io.ReadAll(f)
 	f.Close()
 	if err != nil {
 		http.Error(w, "error reading data", http.StatusInternalServerError)
 		return
 	}
 
-	md := goldmark.New(goldmark.WithRendererOptions(html.WithUnsafe()))
-	reader := text.NewReader(data)
-	doc := md.Parser().Parse(reader)
-	// fixupMarkdown(doc)
-	var html bytes.Buffer
-	if err := md.Renderer().Render(&html, data, doc); err != nil {
-		http.Error(w, "rendering data", http.StatusInternalServerError)
-		return
+
+	p := &markdown.Parser{
+		HeadingIDs: true,
+		Strikethrough: true,
+		TaskListItems: true,
+		AutoLinkText: true,
+		Table: true,
+		Emoji: true,
+		SmartDot: true,
+		SmartDash: true,
+		SmartQuote: true,
 	}
-	w.Write(html.Bytes())
+	doc := p.Parse(string(data))
+	html := markdown.ToHTML(doc)
+	w.Write([]byte(html))
 }
 
 // copied from net/http
