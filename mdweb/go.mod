@@ -1,7 +1,7 @@
 module rsc.io/cmd/mdweb
 
-go 1.21.9
+go 1.24.0
 
-require rsc.io/markdown v0.0.0-20240306144322-0bf8f97ee8ef
+require rsc.io/markdown v0.0.0-20241212154241-6bf72452917f
 
-require golang.org/x/text v0.3.7 // indirect
+require golang.org/x/text v0.30.0 // indirect
