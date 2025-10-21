@@ -292,7 +292,7 @@ func (g *gomoter) connect(l *Lab, m *machine) error {
 	g.connectOnce.Do(func() {
 		// Create the benchlab group if it doesn't exist.
 		// (If it does exist, ignore the error.)
-		l.runLocal(runTrim, "gomote", "group", "create", "benchlab")
+		l.runLocal(0, "gomote", "group", "create", "benchlab")
 
 		// List the existing motes for reuse,
 		// but only in the benchlab group.
@@ -322,7 +322,7 @@ func (g *gomoter) connect(l *Lab, m *machine) error {
 	}
 	g.mu.Unlock()
 
-	name, err := l.runLocal(0, "gomote", "-group=benchlab", "create", m.gomoteKind)
+	name, err := l.runLocal(runTrim, "gomote", "-group=benchlab", "create", m.gomoteKind)
 	if err != nil {
 		return err
 	}

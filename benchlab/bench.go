@@ -60,6 +60,11 @@ type reporter struct {
 	statCmd    []string       // command to refresh benchstat output
 }
 
+func joinQuoted(s []string) string {
+	q := fmt.Sprintf("%q", s)
+	return q[1 : len(q)-1]
+}
+
 func (l *Lab) runAll() error {
 	// Choose output file, avoiding existing files.
 	date := time.Now().Format("2006-01-02")
@@ -69,9 +74,9 @@ func (l *Lab) runAll() error {
 		if i > 0 {
 			suffix = fmt.Sprintf(".%d", i)
 		}
-		rawFile = "bench." + date + suffix + ".txt"
+		rawFile = ".benchlab/bench." + date + suffix + ".txt"
 		if _, err := l.fs.Stat(rawFile); err != nil {
-			l.report.statFile = "benchstat." + date + suffix + ".txt"
+			l.report.statFile = ".benchlab/benchstat." + date + suffix + ".txt"
 			break
 		}
 	}
@@ -83,9 +88,22 @@ func (l *Lab) runAll() error {
 	l.report.rawFile = rawFile
 	l.report.rawOut = f
 
+	// Write commits and hosts in command-line order for benchstat,
+	// in case the actual results come in reordered due to parallelism.
+	for _, commit := range l.Commits {
+		fmt.Fprintf(f, "commit: %s\n", commit)
+	}
+	for _, host := range l.Hosts {
+		fmt.Fprintf(f, "host: %s\n", host)
+	}
+
 	// Choose benchstat layout.
 	// TODO: Find highest priority axis with variation.
-	bcmd := []string{"benchstat", "-alpha=0.001", "-col=commit", "-table=host"}
+	bcmd := []string{
+		"benchstat", "-alpha=0.001",
+		fmt.Sprintf("-col=commit@(%s)", joinQuoted(l.Commits)),
+		fmt.Sprintf("-table=host@(%s)", joinQuoted(l.Hosts)),
+	}
 	l.report.statCmd = append(bcmd, rawFile)
 
 	// Make list of job by host, loading cached results if available.
@@ -150,7 +168,6 @@ func (l *Lab) runAll() error {
 		return err
 	}
 
-	l.report.writeStat(l) // in case it was 100% cached
 	l.log.Printf("completed!")
 	return nil
 }
@@ -234,6 +251,7 @@ func (l *Lab) runJob(j *job, done chan<- *job) {
 }
 
 func (r *reporter) start(l *Lab) {
+	l.report.writeStat(l) // in case it was 100% cached
 	l.log.Printf("[0/%d 0s] reused %d cached runs; starting new runs", r.jobsTotal, r.jobsCached)
 	r.started = time.Now()
 }
