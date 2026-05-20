@@ -282,7 +282,12 @@ func (r *reporter) done(l *Lab, j *job) {
 	// Hold the lock for the raw output too: jobs on different machines
 	// finish concurrently, and their blocks must not interleave.
 	r.mu.Lock()
-	fmt.Fprintf(r.rawOut, "# %s\n\nhost: %s\ncommit: %s\n", j, j.host.name, j.commit)
+	// Reset cpu/goos/goarch/pkg explicitly: benchfmt configuration keys are
+	// sticky across sections, so e.g. an amd64 section's "cpu: Intel..."
+	// would otherwise leak into a following arm64 section that doesn't
+	// emit its own cpu: line, making benchstat warn that benchmarks vary
+	// in cpu within a single (host, commit) group.
+	fmt.Fprintf(r.rawOut, "# %s\n\nhost: %s\ncommit: %s\ncpu:\ngoos:\ngoarch:\npkg:\n", j, j.host.name, j.commit)
 	if j.exe != nil && j.exe.seed != 0 {
 		fmt.Fprintf(r.rawOut, "randlayout: %d\n", j.exe.seed)
 	}
