@@ -119,6 +119,25 @@ func TestUploadRun(t *testing.T) {
 	}
 }
 
+func TestAbsoluteCommand(t *testing.T) {
+	// "go test" runs a test binary by absolute path, so an absolute
+	// command name must run the uploaded copy, not the client's path.
+	setupDirs(t)
+	dir := t.TempDir()
+	script := filepath.Join(dir, "abs.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho absolute\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var files []*File
+	if err := addFile(&files, script); err != nil {
+		t.Fatal(err)
+	}
+	code, _, stdout, stderr := runPipe(t, "", files, filepath.ToSlash(dir), []string{files[0].Path})
+	if code != 0 || stdout != "absolute\n" {
+		t.Errorf("code=%d stdout=%q stderr=%q, want 0, %q", code, stdout, stderr, "absolute\n")
+	}
+}
+
 func TestRelativeUpload(t *testing.T) {
 	// Command in a sibling directory, like the ../testprog example in doc.go.
 	setupDirs(t)

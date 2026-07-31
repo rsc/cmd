@@ -214,8 +214,22 @@ func serve(rw io.ReadWriteCloser, password string, env []string) error {
 		return fail("unexpected request type %q", start.Type)
 	}
 
-	// Start the command.
-	c := exec.Command(req.Args[0])
+	// Start the command. A command naming an uploaded file runs from the
+	// temporary tree: exec resolves a relative name like ./prog against
+	// Dir, but an absolute name is a path on the client, which must be
+	// mapped the same way the uploaded files were. ("go test" runs its
+	// test binaries by absolute path.)
+	name := req.Args[0]
+	slash := strings.ReplaceAll(name, `\`, "/") // a Windows client sends native paths in Args
+	for _, f := range req.Files {
+		if f.Path == slash {
+			if name, err = remotePath(tmpdir, f.Path); err != nil {
+				return fail("%v", err)
+			}
+			break
+		}
+	}
+	c := exec.Command(name)
 	c.Args = req.Args
 	c.Dir = dir
 	if env == nil {
