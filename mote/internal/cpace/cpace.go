@@ -83,9 +83,12 @@ const (
 	// defined message ordering, in which either party may speak first.
 	//
 	// Using Symmetric requires the associated data of the two parties to
-	// differ in every exchange; otherwise an attacker can relay a party's
-	// own message back to it, making it derive a key with itself. If that
-	// cannot be guaranteed, use Initiator and Responder instead.
+	// differ in every exchange; otherwise an attacker running two
+	// concurrent exchanges with the same party can relay each exchange's
+	// message to the other, making that party derive a key with itself.
+	// The message ordering of Initiator and Responder makes the two
+	// transcripts differ, which prevents that relay, so use those roles if
+	// the associated data cannot be guaranteed to differ.
 	Symmetric
 )
 
@@ -201,16 +204,25 @@ func start(cfg *Config, scalar []byte) (*State, []byte, error) {
 // Finish completes a CPace exchange using the message and associated data
 // received from the other party, returning the intermediate session key.
 //
-// Finish reports an error if the message is not a valid group element or
-// encodes a low-order point, which indicates either a corrupted message or
-// an attempt to force a known key. It can be called only once: the secret
-// scalar of an exchange must never be reused.
+// Finish reports an error if the message is not a valid group element,
+// encodes a low-order point, or is this party's own message relayed back
+// to it, each of which indicates either a corrupted message or an attempt
+// to force a known key. It can be called only once: the secret scalar of
+// an exchange must never be reused.
 func (s *State) Finish(msg, ad []byte) ([]byte, error) {
 	if s.priv == nil {
 		return nil, errors.New("cpace: exchange already finished")
 	}
 	priv := s.priv
 	s.priv = nil
+
+	// An honest party's message equals ours only with negligible
+	// probability, so a message that does is our own relayed back to us.
+	// Accepting it would derive a key with ourselves and make our own
+	// confirmation tag verify as the other party's.
+	if bytes.Equal(msg, s.msg) {
+		return nil, errors.New("cpace: invalid peer message: our own message")
+	}
 
 	peer, err := ecdh.X25519().NewPublicKey(msg)
 	if err != nil {
@@ -230,7 +242,15 @@ func (s *State) Finish(msg, ad []byte) ([]byte, error) {
 	}
 
 	// ISK = H.hash(lv_cat(G.DSI || "_ISK", sid, K) || transcript(Ya, ADa, Yb, ADb))
-	b := lvCat(nil, []byte(dsiISK), s.sid, k)
+	//
+	// The buffer holds three length-prefixed values and then the transcript:
+	// four more, plus the two-byte "oc" prefix when the exchange is
+	// symmetric. Allocating it at full size up front keeps append from
+	// growing it and abandoning a buffer that still holds K, which the
+	// clear below would then miss.
+	n := 7*maxLenPrefix + 2 + len(dsiISK) + len(s.sid) + len(k) +
+		len(ya) + len(ada) + len(yb) + len(adb)
+	b := lvCat(make([]byte, 0, n), []byte(dsiISK), s.sid, k)
 	b = s.transcript(b, ya, ada, yb, adb)
 	isk := sha512.Sum512(b)
 	clear(b)
@@ -243,7 +263,9 @@ func (s *State) Finish(msg, ad []byte) ([]byte, error) {
 	// Key confirmation tags, each computed over the message its sender sent:
 	// mac_key = H.hash("CPaceMac" || sid || ISK),
 	// Ta = MAC(mac_key, lv_cat(Ya, ADa)), Tb = MAC(mac_key, lv_cat(Yb, ADb)).
-	b = append([]byte(dsiMac), s.sid...)
+	b = make([]byte, 0, len(dsiMac)+len(s.sid)+len(isk))
+	b = append(b, dsiMac...)
+	b = append(b, s.sid...)
 	b = append(b, isk[:]...)
 	macKey := sha512.Sum512(b)
 	clear(b)
@@ -303,7 +325,12 @@ func (s *State) SessionID() []byte {
 // fills the hash function's first input block, so that the number of bytes
 // hashed does not depend on the password length.
 func generatorString(prs, ci, sid []byte) []byte {
-	b := lvCat(nil, []byte(dsi), prs)
+	// The buffer holds five length-prefixed values, the padding being at
+	// most blockSize bytes. Allocating it at full size up front keeps
+	// append from growing it and abandoning a buffer that still holds the
+	// password, which the clear in generator would then miss.
+	n := 5*maxLenPrefix + len(dsi) + len(prs) + blockSize + len(ci) + len(sid)
+	b := lvCat(make([]byte, 0, n), []byte(dsi), prs)
 	zpad := max(0, blockSize-1-len(b))
 	return lvCat(b, make([]byte, zpad), ci, sid)
 }
@@ -336,6 +363,10 @@ func (s *State) transcript(b, ya, ada, yb, adb []byte) []byte {
 	}
 	return lvCat(lvCat(b, ya, ada), yb, adb)
 }
+
+// maxLenPrefix is the maximum length of the length prefix that prependLen
+// writes: LEB128 encodes seven bits per byte, so an int needs at most ten.
+const maxLenPrefix = 10
 
 // prependLen appends prepend_len(v) to b: v prefixed by its length,
 // encoded using LEB128.

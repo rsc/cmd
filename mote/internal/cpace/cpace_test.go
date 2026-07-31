@@ -357,6 +357,71 @@ func TestLowOrder(t *testing.T) {
 	}
 }
 
+// TestReflect checks that a party rejects its own message relayed back to
+// it. Accepting it would make the party derive a key with itself and make
+// its own confirmation tag verify as the other party's.
+func TestReflect(t *testing.T) {
+	for _, role := range []Role{Initiator, Responder, Symmetric} {
+		for _, ad := range [][]byte{nil, []byte("same")} {
+			cfg := &Config{
+				Role:      role,
+				Password:  []byte("password"),
+				ChannelID: []byte("client\x00server"),
+				AD:        ad,
+			}
+			s, msg, err := Start(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.Finish(msg, ad); err == nil {
+				t.Errorf("role %v, AD %q: Finish accepted our own message", role, ad)
+			}
+		}
+	}
+}
+
+// TestNoRealloc checks that the buffers holding the password and the
+// shared secret are allocated at their full size, so that the clear of
+// each one zeroes every copy. If append grew a buffer, the abandoned one
+// would still hold the secret.
+func TestNoRealloc(t *testing.T) {
+	// lebLen is the length of the LEB128 length prefix for n bytes.
+	lebLen := func(n int) int {
+		m := 1
+		for ; n >= 128; n >>= 7 {
+			m++
+		}
+		return m
+	}
+
+	// generatorString must return the buffer it allocated, at its original
+	// capacity: a grown buffer is a new one, leaving the password behind
+	// in the buffer it replaced.
+	prs, ci, sid := []byte(tvPRS), []byte(tvCI), unhex(t, tvSID)
+	for _, n := range []int{0, 1, 100, 128, 1000} {
+		prs := append(bytes.Clone(prs), make([]byte, n)...)
+		b := generatorString(prs, ci, sid)
+		want := 5*maxLenPrefix + len(dsi) + len(prs) + blockSize + len(ci) + len(sid)
+		if cap(b) != want {
+			t.Errorf("len(PRS) = %d: generatorString buffer grew from %d to %d bytes",
+				len(prs), want, cap(b))
+		}
+	}
+
+	// maxLenPrefix must bound the prefix prependLen writes, for every
+	// length a value can have.
+	for _, n := range []int{0, 1, 127, 128, 300, 16383, 16384} {
+		if got := len(prependLen(nil, make([]byte, n))) - n; got != lebLen(n) {
+			t.Fatalf("prependLen prefix for %d bytes is %d, want %d", n, got, lebLen(n))
+		}
+	}
+	for n := 1; n > 0; n <<= 1 {
+		if got := lebLen(n); got > maxLenPrefix {
+			t.Errorf("prependLen prefix for %d bytes is %d, more than maxLenPrefix = %d", n, got, maxLenPrefix)
+		}
+	}
+}
+
 // TestExchange runs complete exchanges with random scalars and checks that
 // the two parties agree if and only if they started from the same inputs.
 func TestExchange(t *testing.T) {
