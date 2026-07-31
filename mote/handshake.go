@@ -28,12 +28,26 @@ const (
 	// helloTimeout is how long the client waits for more preamble text
 	// before giving up on seeing a server hello.
 	helloTimeout = 60 * time.Second
+
+	// handshakeTimeout is how long a peer has to complete the hello
+	// exchange and the encryption handshake, which move a small, fixed
+	// number of bytes. A peer that takes longer is stalling, and until
+	// the handshake finishes it has not proved it knows the password.
+	handshakeTimeout = 60 * time.Second
 )
 
 // A deadlineReader is a reader with read deadlines,
 // as implemented by net.Conn and *os.File.
 type deadlineReader interface {
 	SetReadDeadline(time.Time) error
+}
+
+// A deadlineConn is a connection with read and write deadlines,
+// as implemented by net.Conn. Connections that are pipes to another
+// process (the ssh and gomote transports) are not deadlineConns:
+// they are already authenticated by the transport.
+type deadlineConn interface {
+	SetDeadline(time.Time) error
 }
 
 // clientHandshake reads the connection preamble and server hello
@@ -124,7 +138,7 @@ func serverHandshake(rw io.ReadWriter) error {
 	var buf [1]byte
 	for {
 		if _, err := io.ReadFull(rw, buf[:]); err != nil {
-			return fmt.Errorf("reading client hello: %v", err)
+			return fmt.Errorf("reading client hello: %w", err)
 		}
 		line = append(line, buf[0])
 		if buf[0] == '\n' {

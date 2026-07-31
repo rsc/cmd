@@ -58,6 +58,13 @@ func clientConn(rwc io.ReadWriteCloser, password string) (*Conn, error) {
 		return nil, err
 	}
 	if password != "" {
+		// Bound how long a stalled server can hold the client in the
+		// encryption handshake and the Info exchange that follows.
+		// (clientHandshake sets its own deadline for the server hello.)
+		if d, ok := rwc.(deadlineConn); ok {
+			d.SetDeadline(time.Now().Add(handshakeTimeout))
+			defer d.SetDeadline(time.Time{})
+		}
 		s, err := secureClient(rwc, password)
 		if err != nil {
 			return nil, err

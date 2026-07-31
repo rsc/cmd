@@ -83,6 +83,43 @@ func TestPacketJSONTooLarge(t *testing.T) {
 	}
 }
 
+func TestHandshakePacket(t *testing.T) {
+	pc := newConn(bufConn{new(bytes.Buffer)})
+	if err := pc.writePacket(nil, []byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+	data, err := pc.readHandshakePacket()
+	if err != nil || string(data) != "hello" {
+		t.Fatalf("readHandshakePacket = %q, %v", data, err)
+	}
+}
+
+func TestHandshakePacketTooLarge(t *testing.T) {
+	// A handshake packet arrives before the peer has been authenticated,
+	// so an outsized data section must be rejected on the strength of the
+	// header alone, without allocating a buffer for it.
+	buf := new(bytes.Buffer)
+	var hdr [8]byte
+	binary.BigEndian.PutUint32(hdr[4:], 1<<30)
+	buf.Write(hdr[:])
+	pc := newConn(bufConn{buf})
+	if _, err := pc.readHandshakePacket(); err == nil || !strings.Contains(err.Error(), "too large") {
+		t.Fatalf("readHandshakePacket: %v, want too-large error", err)
+	}
+}
+
+func TestHandshakePacketJSON(t *testing.T) {
+	// Handshake packets carry no JSON section.
+	buf := new(bytes.Buffer)
+	pc := newConn(bufConn{buf})
+	if err := pc.writePacket(&Request{Type: "Setup"}, []byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pc.readHandshakePacket(); err == nil || !strings.Contains(err.Error(), "JSON") {
+		t.Fatalf("readHandshakePacket: %v, want JSON-section error", err)
+	}
+}
+
 func TestPacketShortStream(t *testing.T) {
 	pc := newConn(bufConn{new(bytes.Buffer)})
 	err := pc.writePacketStream(nil, 10, strings.NewReader("short"))

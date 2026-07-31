@@ -83,6 +83,12 @@ initiator and the client the responder. After the two CPace messages,
 each side sends its confirmation tag and verifies the tag it receives;
 a bad tag means the passwords do not match, and the connection ends.
 
+The client sends its confirmation tag first, and the server sends its
+own only after verifying the client's. Either order allows just one
+password guess per connection, but this one keeps the server, which
+listens on an open port, from confirming a guess to a client that has
+not proved anything: a client that guessed wrong sees only a hangup.
+
 The CPace intermediate session key is then run through HKDF-SHA256
 with the info string “mote noise psk” to produce a 32-byte pre-shared
 key for a Noise NNpsk0 handshake (25519, ChaChaPoly, SHA256) in which
@@ -91,10 +97,18 @@ encrypted channel.
 
 The CPace messages, confirmation tags, and Noise handshake messages
 all travel in the standard packet framing, with an empty JSON section
-and the message bytes as the binary section. After the handshake, each
-Noise transport message (at most 65535 bytes of ciphertext, including
-the 16-byte tag) is framed by a 16-bit big-endian ciphertext length,
-and the packet framing runs on top of the resulting encrypted stream.
+and the message bytes as the binary section. Because these packets
+arrive before the peer has been authenticated, a handshake packet that
+declares a JSON section or more than 1024 bytes of data is rejected on
+the strength of its header, without allocating a buffer for it. A peer
+that has not finished the handshake within 60 seconds is disconnected.
+
+After the handshake, each Noise transport message (at most 65535 bytes
+of ciphertext, including the 16-byte tag) is framed by a 16-bit
+big-endian ciphertext length. That length is the message's associated
+data, so altering it in flight fails decryption instead of silently
+desynchronizing the framing. The packet framing then runs on top of
+the resulting encrypted stream.
 
 ## Setup
 

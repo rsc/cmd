@@ -5,7 +5,9 @@
 package main
 
 import (
+	"errors"
 	"io"
+	"net"
 	"os"
 	"strings"
 	"testing"
@@ -81,6 +83,65 @@ func TestScanServerHello(t *testing.T) {
 			})
 		})
 	}
+}
+
+func TestServeHandshakeTimeout(t *testing.T) {
+	// A peer that connects and then stalls must be disconnected instead
+	// of tying up a connection and a goroutine indefinitely: until the
+	// handshake finishes it has not proved it knows the password.
+	synctest.Test(t, func(t *testing.T) {
+		cconn, sconn := net.Pipe()
+		defer cconn.Close()
+		defer sconn.Close()
+		start := time.Now()
+		done := make(chan error, 1)
+		go func() { done <- serve(sconn, "s3cret") }()
+
+		// Read the server hello but never answer it.
+		hello := make([]byte, len(serverHello))
+		if _, err := io.ReadFull(cconn, hello); err != nil {
+			t.Fatalf("reading server hello: %v", err)
+		}
+		err := <-done
+		if !errors.Is(err, os.ErrDeadlineExceeded) {
+			t.Fatalf("serve: %v, want deadline exceeded", err)
+		}
+		if d := time.Since(start); d != handshakeTimeout {
+			t.Errorf("serve gave up after %v, want %v", d, handshakeTimeout)
+		}
+	})
+}
+
+func TestServeHandshakeDeadlineCleared(t *testing.T) {
+	// Once the handshake is done the deadline must be cleared on both
+	// sides, because the commands that follow can run for any length
+	// of time. Idle past the deadline and then use the session.
+	synctest.Test(t, func(t *testing.T) {
+		cconn, sconn := net.Pipe()
+		defer cconn.Close()
+		defer sconn.Close()
+		done := make(chan error, 1)
+		go func() { done <- serve(sconn, "s3cret") }()
+		conn, err := clientConn(cconn, "s3cret")
+		if err != nil {
+			t.Fatalf("clientConn: %v", err)
+		}
+		time.Sleep(2 * handshakeTimeout)
+
+		// A bogus request is enough to show the session still works,
+		// and ends it without running a command.
+		if err := conn.writePacket(&Request{Type: "Nonsense"}, nil); err != nil {
+			t.Fatalf("writePacket: %v", err)
+		}
+		var resp Response
+		if _, err := conn.readPacket(&resp); err != nil {
+			t.Fatalf("reading response: %v", err)
+		}
+		if !strings.Contains(resp.Error, "unexpected request type") {
+			t.Errorf("response Error = %q, want unexpected request type", resp.Error)
+		}
+		<-done
+	})
 }
 
 // pipeRW adapts separate read and write streams into an io.ReadWriter.

@@ -7,6 +7,7 @@ package main
 import (
 	"bytes"
 	"crypto/rand"
+	"encoding/binary"
 	"io"
 	"net"
 	"strings"
@@ -79,6 +80,60 @@ func TestSecureWrongPassword(t *testing.T) {
 	cconn.Close()
 	if err := <-ch; err == nil {
 		t.Fatalf("secureServer succeeded with mismatched password")
+	}
+}
+
+func TestSecureFrameLength(t *testing.T) {
+	// The frame's length prefix is authenticated along with the message,
+	// so a frame that is well formed except that its length prefix was
+	// not the associated data must fail to decrypt.
+	cconn, sconn := net.Pipe()
+	defer cconn.Close()
+	defer sconn.Close()
+	ch := make(chan io.ReadWriteCloser, 1)
+	go func() {
+		rw, err := secureServer(sconn, "s3cret")
+		if err != nil {
+			t.Errorf("secureServer: %v", err)
+		}
+		ch <- rw
+	}()
+	crw, err := secureClient(cconn, "s3cret")
+	if err != nil {
+		t.Fatalf("secureClient: %v", err)
+	}
+	srw := <-ch
+	if srw == nil {
+		t.Fatal("secureServer failed")
+	}
+	cs, ss := crw.(*secureStream), srw.(*secureStream)
+
+	// Move the streams off the pipe, so that frames can be written by
+	// hand and the two cipher states stay in step.
+	var buf bytes.Buffer
+	cs.rw = bufConn{&buf}
+	ss.rw = bufConn{&buf}
+	if _, err := cs.Write([]byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+	p := make([]byte, 64)
+	n, err := ss.Read(p)
+	if err != nil || string(p[:n]) != "hello" {
+		t.Fatalf("Read = %q, %v, want %q", p[:n], err, "hello")
+	}
+
+	// Same message, same length prefix, but sealed without the length
+	// prefix as associated data: the server must reject it.
+	ct, err := cs.enc.Encrypt(nil, nil, []byte("hello"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hdr [2]byte
+	binary.BigEndian.PutUint16(hdr[:], uint16(len(ct)))
+	buf.Write(hdr[:])
+	buf.Write(ct)
+	if _, err := ss.Read(p); err == nil {
+		t.Fatalf("Read succeeded on frame with unauthenticated length")
 	}
 }
 

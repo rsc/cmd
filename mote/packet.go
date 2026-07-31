@@ -48,6 +48,11 @@ type Response struct {
 // but the JSON metadata should always be small.
 const maxJSON = 1 << 20
 
+// maxHandshake is the maximum accepted size for a handshake packet.
+// The CPace messages, the key confirmation tags, and the Noise messages
+// are all well under 128 bytes.
+const maxHandshake = 1024
+
 // A Conn is a mote protocol connection, reading and writing framed
 // packets on an underlying stream.
 // Each packet is a 32-bit big-endian JSON length, a 32-bit big-endian
@@ -161,6 +166,34 @@ func (c *Conn) readPacket(js any) ([]byte, error) {
 	}
 	data := make([]byte, size)
 	if _, err := io.ReadFull(body, data); err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+// readHandshakePacket reads a handshake packet: a packet with no JSON
+// section and at most maxHandshake bytes of data.
+//
+// Handshake packets arrive before the peer has been authenticated, so
+// unlike readPacket, which trusts the packet header enough to allocate a
+// buffer for an upload of any size, readHandshakePacket checks the size
+// before allocating. Otherwise any peer that can connect to the server
+// could make it allocate up to 4 GB by sending an eight-byte header.
+func (c *Conn) readHandshakePacket() ([]byte, error) {
+	var hdr [8]byte
+	if _, err := io.ReadFull(c.rw, hdr[:]); err != nil {
+		return nil, err
+	}
+	jsize := binary.BigEndian.Uint32(hdr[0:])
+	dsize := binary.BigEndian.Uint32(hdr[4:])
+	if jsize != 0 {
+		return nil, fmt.Errorf("handshake packet has JSON section")
+	}
+	if dsize > maxHandshake {
+		return nil, fmt.Errorf("handshake packet too large: %d bytes", dsize)
+	}
+	data := make([]byte, dsize)
+	if _, err := io.ReadFull(c.rw, data); err != nil {
 		return nil, err
 	}
 	return data, nil

@@ -49,7 +49,7 @@ func secureServer(rw io.ReadWriteCloser, password string) (_ io.ReadWriteCloser,
 	if err := c.writePacket(nil, msg1); err != nil {
 		return nil, err
 	}
-	msg2, err := c.readPacket(nil)
+	msg2, err := c.readHandshakePacket()
 	if err != nil {
 		return nil, err
 	}
@@ -57,15 +57,20 @@ func secureServer(rw io.ReadWriteCloser, password string) (_ io.ReadWriteCloser,
 	if err != nil {
 		return nil, err
 	}
-	if err := c.writePacket(nil, st.Tag()); err != nil {
-		return nil, err
-	}
-	tag, err := c.readPacket(nil)
+	// Check the client's key confirmation before sending the server's.
+	// Either way an attacker gets only one password guess per connection,
+	// but the server listens on an open port, so it must not be the one
+	// to answer an unauthenticated guess: a client that guessed wrong
+	// sees only a hangup. The client, which chose to connect, goes first.
+	tag, err := c.readHandshakePacket()
 	if err != nil {
 		return nil, err
 	}
 	if err := st.Verify(tag); err != nil {
 		return nil, fmt.Errorf("client used incorrect password")
+	}
+	if err := c.writePacket(nil, st.Tag()); err != nil {
+		return nil, err
 	}
 	psk, err := derivePSK(key)
 	if err != nil {
@@ -75,7 +80,7 @@ func secureServer(rw io.ReadWriteCloser, password string) (_ io.ReadWriteCloser,
 	if err != nil {
 		return nil, err
 	}
-	m1, err := c.readPacket(nil)
+	m1, err := c.readHandshakePacket()
 	if err != nil {
 		return nil, err
 	}
@@ -102,7 +107,7 @@ func secureClient(rw io.ReadWriteCloser, password string) (_ io.ReadWriteCloser,
 		}
 	}()
 	c := newConn(rw)
-	msg1, err := c.readPacket(nil)
+	msg1, err := c.readHandshakePacket()
 	if err != nil {
 		return nil, err
 	}
@@ -117,15 +122,19 @@ func secureClient(rw io.ReadWriteCloser, password string) (_ io.ReadWriteCloser,
 	if err := c.writePacket(nil, msg2); err != nil {
 		return nil, err
 	}
-	tag, err := c.readPacket(nil)
-	if err != nil {
+	// Send the client's key confirmation before checking the server's;
+	// see the comment in secureServer.
+	if err := c.writePacket(nil, st.Tag()); err != nil {
 		return nil, err
+	}
+	tag, err := c.readHandshakePacket()
+	if err != nil {
+		// The server hangs up instead of answering a key confirmation
+		// that failed, so a hangup here usually means a wrong password.
+		return nil, fmt.Errorf("no reply to key confirmation (incorrect password?): %v", err)
 	}
 	if err := st.Verify(tag); err != nil {
 		return nil, fmt.Errorf("incorrect password for server")
-	}
-	if err := c.writePacket(nil, st.Tag()); err != nil {
-		return nil, err
 	}
 	psk, err := derivePSK(key)
 	if err != nil {
@@ -142,7 +151,7 @@ func secureClient(rw io.ReadWriteCloser, password string) (_ io.ReadWriteCloser,
 	if err := c.writePacket(nil, m1); err != nil {
 		return nil, err
 	}
-	m2, err := c.readPacket(nil)
+	m2, err := c.readHandshakePacket()
 	if err != nil {
 		return nil, err
 	}
@@ -153,22 +162,34 @@ func secureClient(rw io.ReadWriteCloser, password string) (_ io.ReadWriteCloser,
 	return &secureStream{rw: rw, enc: cs1, dec: cs2}, nil
 }
 
+// noiseOverhead is the number of bytes a Noise transport message adds
+// to its plaintext: the ChaChaPoly authentication tag.
+const noiseOverhead = 16
+
 // maxNoisePlaintext is the largest plaintext that fits in one Noise
-// transport message (65535-byte ciphertext limit minus the 16-byte tag).
-const maxNoisePlaintext = 65535 - 16
+// transport message (65535-byte ciphertext limit minus the tag).
+const maxNoisePlaintext = 65535 - noiseOverhead
 
 // A secureStream is an encrypted stream layered over rw.
 // Each Noise transport message is framed by a 16-bit big-endian
-// ciphertext length.
+// ciphertext length, which is authenticated along with the message.
+//
+// Read and Write may be used concurrently with each other,
+// as the client and server both do, but each is single-threaded:
+// the cipher states advance a nonce for every message and so must
+// see the messages in order.
 type secureStream struct {
 	rw   io.ReadWriteCloser
 	enc  *noise.CipherState
 	dec  *noise.CipherState
+	rmu  sync.Mutex
 	rbuf []byte
 	wmu  sync.Mutex
 }
 
 func (s *secureStream) Read(p []byte) (int, error) {
+	s.rmu.Lock()
+	defer s.rmu.Unlock()
 	for len(s.rbuf) == 0 {
 		var hdr [2]byte
 		if _, err := io.ReadFull(s.rw, hdr[:]); err != nil {
@@ -178,7 +199,7 @@ func (s *secureStream) Read(p []byte) (int, error) {
 		if _, err := io.ReadFull(s.rw, ct); err != nil {
 			return 0, err
 		}
-		pt, err := s.dec.Decrypt(nil, nil, ct)
+		pt, err := s.dec.Decrypt(nil, hdr[:], ct)
 		if err != nil {
 			return 0, fmt.Errorf("decrypting message: %v", err)
 		}
@@ -195,12 +216,17 @@ func (s *secureStream) Write(p []byte) (int, error) {
 	total := 0
 	for len(p) > 0 {
 		n := min(len(p), maxNoisePlaintext)
-		var frame [2]byte
-		ct, err := s.enc.Encrypt(frame[:], nil, p[:n])
+		// The length prefix is the message's associated data, so that
+		// changing it in flight fails decryption instead of silently
+		// desynchronizing the framing. The message cannot fit in hdr's
+		// capacity, so Encrypt returns a new buffer holding hdr followed
+		// by the ciphertext, leaving hdr itself intact to authenticate.
+		var hdr [2]byte
+		binary.BigEndian.PutUint16(hdr[:], uint16(n+noiseOverhead))
+		ct, err := s.enc.Encrypt(hdr[:], hdr[:], p[:n])
 		if err != nil {
 			return total, fmt.Errorf("encrypting message: %v", err)
 		}
-		binary.BigEndian.PutUint16(ct[:2], uint16(len(ct)-2))
 		if _, err := s.rw.Write(ct); err != nil {
 			return total, err
 		}

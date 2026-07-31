@@ -5,14 +5,17 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"os"
 	"os/exec"
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 )
 
 // cmdServe implements "mote serve URL".
@@ -42,11 +45,56 @@ func (stdioConn) Read(p []byte) (int, error)  { return os.Stdin.Read(p) }
 func (stdioConn) Write(p []byte) (int, error) { return os.Stdout.Write(p) }
 func (stdioConn) Close() error                { return nil }
 
+// maxSessions is the maximum number of sessions served at once.
+// The limit bounds the resources that clients, which are unauthenticated
+// until their handshakes finish, can tie up. Connections beyond the limit
+// wait in the listener's queue.
+const maxSessions = 64
+
+// serveListener accepts connections on ln and serves a session on each,
+// using password to encrypt the session (or "" for transports that are
+// already secure). It does not return.
+func serveListener(ln net.Listener, password string) {
+	sem := make(chan struct{}, maxSessions)
+	var delay time.Duration
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				log.Fatal(err)
+			}
+			// Transient failure, such as running out of file descriptors.
+			// Back off and keep serving instead of killing the server:
+			// otherwise a flood of connections could shut it down.
+			delay = min(max(2*delay, 5*time.Millisecond), time.Second)
+			log.Printf("accept: %v (retrying in %v)", err, delay)
+			time.Sleep(delay)
+			continue
+		}
+		delay = 0
+		sem <- struct{}{}
+		go func() {
+			defer func() { <-sem }()
+			defer conn.Close()
+			if err := serve(conn, password); err != nil {
+				log.Print(err)
+			}
+		}()
+	}
+}
+
 // serve runs one server session on rw: handshake, optional encryption,
 // setup and file upload, command execution, output streaming, exit status.
 // It is the entire server; every transport ends up here.
 // It does not close rw.
 func serve(rw io.ReadWriteCloser, password string) error {
+	// Bound how long an unauthenticated peer can hold the connection.
+	// The deadline is cleared once the session is established, because
+	// the commands that follow can take arbitrarily long.
+	deadline, _ := rw.(deadlineConn)
+	if deadline != nil {
+		deadline.SetDeadline(time.Now().Add(handshakeTimeout))
+	}
 	if err := serverHandshake(rw); err != nil {
 		return err
 	}
@@ -56,6 +104,9 @@ func serve(rw io.ReadWriteCloser, password string) error {
 			return err
 		}
 		rw = s
+	}
+	if deadline != nil {
+		deadline.SetDeadline(time.Time{})
 	}
 	conn := newConn(rw)
 

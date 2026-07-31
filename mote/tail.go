@@ -180,18 +180,7 @@ func serveTail(rawURL string) {
 		log.Fatal(err)
 	}
 	log.Printf("serving tail://%s", name)
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			log.Fatal(err)
-		}
-		go func() {
-			defer conn.Close()
-			if err := serve(conn, ""); err != nil {
-				log.Print(err)
-			}
-		}()
-	}
+	serveListener(ln, "")
 }
 
 // cmdLogin implements "mote login URL", establishing Tailscale

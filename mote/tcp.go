@@ -62,16 +62,5 @@ func serveTCP(rawURL string) {
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
 	log.Printf("serving tcp://%s/%s", net.JoinHostPort(host, fmt.Sprint(port)), password)
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			log.Fatal(err)
-		}
-		go func() {
-			defer conn.Close()
-			if err := serve(conn, password); err != nil {
-				log.Print(err)
-			}
-		}()
-	}
+	serveListener(ln, password)
 }
