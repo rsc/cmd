@@ -15,3 +15,7 @@ func killGroup(c *exec.Cmd) {
 		c.Process.Kill()
 	}
 }
+
+// detach is a no-op on systems without sessions: a process started
+// here already outlives its parent.
+func detach(c *exec.Cmd) {}

@@ -20,6 +20,7 @@ responses. The JSON sections correspond to these Go structs:
 		Args []string `json:",omitzero"`
 		Dir string `json:",omitzero"`
 		Env []string `json:",omitzero"`
+		Addr string `json:",omitzero"`
 	}
 
 	type File struct {
@@ -41,6 +42,9 @@ responses. The JSON sections correspond to these Go structs:
 
 The request types are Setup, Upload, Start, and Kill.
 The response types are Info, Need, Ready, Output, and Exit.
+The Tailscale daemon, described at the end of this file, adds the
+request types Dial and Serve and the response types Connected,
+Serving, and Log.
 
 Any response may set Error, which the client reports as a fatal error.
 A server that cannot continue (a failed upload, a command that cannot
@@ -160,3 +164,33 @@ sends a response of type Exit with ExitCode and Status (a
 human-readable description of how the command exited) set, and then
 hangs up. ExitCode is negative if the command was killed by a signal.
 After receiving Exit, the client hangs up.
+
+## The Tailscale Daemon
+
+Bringing a Tailscale node up takes a few seconds, so mote does not do
+it once per command. Instead one background daemon holds the node and
+the other mote commands on the machine — clients and the server alike
+— reach it over a unix socket named `service` in the node's
+configuration directory. The daemon exits after 30 minutes with no
+connections. This is a second use of the packet framing above, on a
+different connection: between a mote and its local daemon, not between
+a client and a remote server.
+
+A client that wants to reach a server sends a request of type Dial
+with Addr set to the tailnet address (`mote-name:6683`). The daemon
+answers with a response of type Connected, or of type Error with Error
+set if it cannot reach the address. After Connected the packet framing
+stops on that connection: the daemon copies raw bytes in both
+directions between the client and the tailnet, and the client speaks
+the protocol above through it to the remote server.
+
+A server sends a request of type Serve, with Env set to the
+environment its commands should run with. The daemon starts listening
+on the tailnet and answers with a response of type Serving. It then
+runs the sessions itself, as the server would, and sends its log
+output — Tailscale's messages and any session errors — to the mote
+server as responses of type Log whose binary sections are the text to
+print. Only one server may be registered at a time; a second Serve is
+refused with Error set. When the mote server hangs up, the daemon
+stops listening; sessions already running are left to finish.
+

@@ -14,7 +14,8 @@ import (
 )
 
 func TestGoSetup(t *testing.T) {
-	if _, err := exec.LookPath("go"); err != nil {
+	goTool, err := exec.LookPath("go")
+	if err != nil {
 		t.Skip("no go command")
 	}
 	exe, err := os.Executable()
@@ -22,8 +23,10 @@ func TestGoSetup(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := filepath.Dir(exe)
-	// Put the hook directory on PATH so a second run finds the hooks.
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	// Use a minimal PATH holding only the hook directory and the go
+	// command, so that hooks installed for real (outside the test)
+	// cannot make combinations look already covered.
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+filepath.Dir(goTool))
 
 	cmdGoSetup(nil)
 

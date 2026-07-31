@@ -43,7 +43,11 @@ func dialServer(rawURL string) (*Conn, error) {
 	}
 	conn, err := clientConn(rwc, password)
 	if err != nil {
-		rwc.Close()
+		if p, ok := rwc.(*procConn); ok {
+			err = p.abort(err)
+		} else {
+			rwc.Close()
+		}
 		return nil, err
 	}
 	return conn, nil
@@ -129,6 +133,46 @@ func (p *procConn) Close() error {
 	p.stdout.Close()
 	err := p.cmd.Wait()
 	if err != nil && p.stderr != nil {
+		if msg := strings.TrimSpace(p.stderr.String()); msg != "" {
+			err = fmt.Errorf("%v\n%s", err, msg)
+		}
+	}
+	return err
+}
+
+// abort tears down the connection after a protocol failure, appending
+// transport diagnostics (such as the ssh subprocess's standard error)
+// to err when there are any.
+func (c *Conn) abort(err error) error {
+	if p, ok := c.rw.(*procConn); ok {
+		return p.abort(err)
+	}
+	c.rw.Close()
+	return err
+}
+
+// abort tears down the subprocess after a failed handshake, appending
+// any captured standard error text to err: when the handshake times out
+// or the subprocess hangs up, its diagnostics usually explain why.
+// Closing stdin tells a healthy subprocess to exit; it gets a few
+// seconds to do so and to flush those diagnostics (the handshake can
+// fail before the final standard error output has arrived), and then
+// it is killed, so that a wedged ssh or gomote cannot hang the client.
+func (p *procConn) abort(err error) error {
+	p.stdin.Close()
+	done := make(chan struct{})
+	go func() {
+		p.cmd.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		p.cmd.Process.Kill()
+		<-done
+	}
+	p.stdout.Close()
+	if p.stderr != nil {
 		if msg := strings.TrimSpace(p.stderr.String()); msg != "" {
 			err = fmt.Errorf("%v\n%s", err, msg)
 		}

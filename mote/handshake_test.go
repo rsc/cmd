@@ -95,7 +95,7 @@ func TestServeHandshakeTimeout(t *testing.T) {
 		defer sconn.Close()
 		start := time.Now()
 		done := make(chan error, 1)
-		go func() { done <- serve(sconn, "s3cret") }()
+		go func() { done <- serve(sconn, "s3cret", nil) }()
 
 		// Read the server hello but never answer it.
 		hello := make([]byte, len(serverHello))
@@ -121,7 +121,7 @@ func TestServeHandshakeDeadlineCleared(t *testing.T) {
 		defer cconn.Close()
 		defer sconn.Close()
 		done := make(chan error, 1)
-		go func() { done <- serve(sconn, "s3cret") }()
+		go func() { done <- serve(sconn, "s3cret", nil) }()
 		conn, err := clientConn(cconn, "s3cret")
 		if err != nil {
 			t.Fatalf("clientConn: %v", err)

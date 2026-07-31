@@ -5,6 +5,7 @@
 package main
 
 import (
+	"bytes"
 	"io"
 	"net/url"
 	"os"
@@ -14,6 +15,9 @@ import (
 
 // dialSSH connects to an ssh://[user@]host[:port] server by running
 // ssh with connection sharing enabled and "mote serve -" on the far end.
+// Standard error from ssh is hidden unless an error (such as a
+// handshake timeout) happens; password prompts still work, because
+// ssh prints those directly to the terminal.
 func dialSSH(u *url.URL) (io.ReadWriteCloser, error) {
 	if home, err := os.UserHomeDir(); err == nil {
 		os.MkdirAll(filepath.Join(home, ".ssh", "sockets"), 0o700)
@@ -32,6 +36,6 @@ func dialSSH(u *url.URL) (io.ReadWriteCloser, error) {
 	}
 	args = append(args, target, "mote", "serve", "-")
 	c := exec.Command("ssh", args...)
-	c.Stderr = os.Stderr
+	c.Stderr = new(bytes.Buffer)
 	return startProcConn(c)
 }

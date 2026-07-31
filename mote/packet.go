@@ -21,6 +21,7 @@ type Request struct {
 	Args  []string `json:",omitzero"`
 	Dir   string   `json:",omitzero"`
 	Env   []string `json:",omitzero"`
+	Addr  string   `json:",omitzero"` // Dial, to the Tailscale daemon
 }
 
 // A File describes a file to be placed on the remote system.

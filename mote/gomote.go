@@ -43,9 +43,29 @@ func dialGomote(u *url.URL) (io.ReadWriteCloser, error) {
 	if _, err := gomoteOutput(exec.Command("gomote", "put", inst, bin)); err != nil {
 		return nil, err
 	}
-	c := exec.Command("gomote", "ssh", inst, "./mote", "serve", "-")
-	c.Stderr = new(bytes.Buffer) // hidden unless Close reports an error
-	return startProcConn(c)
+	// gomote ssh runs an interactive shell on the instance; it cannot
+	// pass a command the way ssh can. The session has no pty, so the
+	// shell reads commands from standard input without echoing them:
+	// send one line replacing the shell with the mote server, and the
+	// pipes then carry the mote protocol. Anything the shell prints
+	// first is preamble text that the handshake skips.
+	//
+	// This does not work against today's gomote ssh proxy, which
+	// rejects sessions that do not allocate a pty ("scp etc not yet
+	// supported"; go.dev/issue/21140) and inserts a cooked pty of its
+	// own that no byte-transparent protocol can survive. Fixing that
+	// requires a change to the proxy, not to mote; until then the
+	// proxy's message is reported as the handshake failure.
+	c := exec.Command("gomote", "ssh", inst)
+	c.Stderr = new(bytes.Buffer) // hidden unless an error is reported
+	p, err := startProcConn(c)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := io.WriteString(p, "exec ./mote serve -\n"); err != nil {
+		return nil, p.abort(err)
+	}
+	return p, nil
 }
 
 // gomoteOutput runs the gomote command c, returning its standard output.

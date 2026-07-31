@@ -118,6 +118,28 @@ The runner script is “mote -t” applied to the arguments:
 	exec mote -t "$@"
 	%
 
+The script names no server, so mote uses the fallbacks listed above.
+Cross-compiling on the command line sets $GOOS and $GOARCH in the
+environment that “go test” passes to the script, selecting the alias for
+the target system; using “go env -w” instead leaves them unset, and mote
+reads them from the test binary. Either way the server is the
+$GOOS-$GOARCH alias.
+
+Setting $MOTE overrides that choice for a single command, naming an alias
+or a URL to use instead:
+
+	% GOOS=linux GOARCH=amd64 go test strings
+	PASS
+	% MOTE=kremvax GOOS=linux GOARCH=amd64 go test strings
+	PASS
+	% MOTE=ssh://kremvax GOOS=linux GOARCH=amd64 go test strings
+	PASS
+	%
+
+That is useful when more than one server runs the same $GOOS-$GOARCH,
+or to send one test run to a particular machine without redefining
+the alias.
+
 # Using SSH
 
 To use mote over SSH, compile and install mote on both client and server, and check that it is available on the server PATH:
@@ -158,13 +180,18 @@ Mote will prompt for a Tailscale auth key and then use that
 auth key to register and obtain credentials.
 It caches those credentials for reuse in future runs.
 
-To create an auth key, open the “Keys” page of the Tailscale admin console
-(https://login.tailscale.com/admin/settings/keys) and click “Generate auth key”.
-Mote registers with the tag “tag:mote”, so before generating the key,
-define tag:mote in the tailnet policy file's “tagOwners” section,
-and then select tag:mote on the key generation form.
+Mote registers with the tag “tag:mote”, so before creating an auth key,
+define tag:mote in the tailnet policy file's “tagOwners” section.
 Tagged nodes have no expiring human identity attached,
 and the tag makes it easy to write policy rules for mote servers.
+
+To create the auth key, visit
+https://console.tailscale.com/admin/machines/new-linux and then:
+
+ 1. Add tag:mote to Tags.
+ 2. Mark the authentication key reusable (optional, for multiple nodes).
+ 3. Click “Generate install script”, and then copy the --auth-key= argument
+    to paste into the mote prompt.
 
 The server registers on the tailnet as mote-servername
 and the client registers as mote-clientname,
@@ -174,6 +201,21 @@ To set a different client name, run “mote login tail://clientname”.
 Once the system is registered, either by a previous “mote serve”
 or an explicit “mote login”, “mote serve tail://servername”
 can be shortened to “mote serve tail:”.
+
+Bringing a Tailscale node up takes a few seconds, and Tailscale does not
+expect nodes to come and go once per command, so mote keeps the node running
+in a background daemon, the way ssh keeps a connection with ControlMaster.
+The first mote that needs the tailnet starts the daemon; later ones find it
+and reuse it, so only the first command pays for the connection.
+The daemon exits after 30 minutes with nothing to do.
+
+Because the daemon holds the node, a mote client and a mote server on the
+same machine share it, which is not possible when each command brings up a
+node of its own.
+
+The daemon keeps its socket and its log in the node's configuration
+directory, tail-name. If a mote command reports that the daemon would not
+start, tail-name/log has the reason.
 
 # Using Direct TCP
 
@@ -230,7 +272,8 @@ of the user configuration directory. For example:
 In that directory:
 
   - aliases.txt contains the alias definitions, one alias per line.
-  - tail-name/ is a directory that holds the login credentials for tail://name.
+  - tail-name/ is a directory that holds the login credentials for tail://name,
+    along with the service socket, lock, and log of the daemon holding that node.
 
 Setting $MOTECONFIG overrides the location of the configuration directory.
 

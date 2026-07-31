@@ -10,10 +10,8 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 
@@ -73,17 +71,14 @@ func registeredTailName() (string, error) {
 	return "", fmt.Errorf("multiple Tailscale logins (%s); name one explicitly", strings.Join(names, ", "))
 }
 
-// tsnetServer returns a tsnet server for the given name,
-// registering on the tailnet as mote-name and storing credentials
-// in the tail-name configuration subdirectory.
-// If no credentials exist yet, it prompts for a Tailscale auth key.
+// tsnetServer returns a tsnet server for the given name, registering on
+// the tailnet as mote-name and storing credentials in the tail-name
+// configuration subdirectory. The caller must set AuthKey to register a
+// node that has no credentials yet.
 func tsnetServer(name string) *tsnet.Server {
-	dir := filepath.Join(configDir(), "tail-"+name)
-	entries, _ := os.ReadDir(dir)
-	needKey := len(entries) == 0
 	srv := &tsnet.Server{
 		Hostname:      "mote-" + name,
-		Dir:           dir,
+		Dir:           tailDir(name),
 		AdvertiseTags: []string{"tag:mote"}, // see the Tailscale section in doc.go
 		UserLogf:      onceLogf(log.Printf), // tsnet repeats the login URL every few seconds
 		Logf:          func(string, ...any) {},
@@ -92,18 +87,33 @@ func tsnetServer(name string) *tsnet.Server {
 		srv.Logf = log.Printf
 		srv.UserLogf = log.Printf
 	}
-	if needKey {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			log.Fatal(err)
-		}
-		fmt.Fprintf(os.Stderr, "Tailscale auth key: ")
-		sc := bufio.NewScanner(os.Stdin)
-		if !sc.Scan() || strings.TrimSpace(sc.Text()) == "" {
-			log.Fatal("no Tailscale auth key provided")
-		}
-		srv.AuthKey = strings.TrimSpace(sc.Text())
-	}
 	return srv
+}
+
+// tailLogin registers the named node on the tailnet if it has no
+// credentials yet, prompting for a Tailscale auth key.
+// The daemon runs in the background with no terminal to prompt on,
+// so registration always happens in the foreground, here.
+func tailLogin(name string) error {
+	if haveTailCredentials(name) {
+		return nil
+	}
+	dir := tailDir(name)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "Tailscale auth key: ")
+	sc := bufio.NewScanner(os.Stdin)
+	if !sc.Scan() || strings.TrimSpace(sc.Text()) == "" {
+		return fmt.Errorf("no Tailscale auth key provided")
+	}
+	srv := tsnetServer(name)
+	srv.AuthKey = strings.TrimSpace(sc.Text())
+	defer srv.Close()
+	if _, err := srv.Up(context.Background()); err != nil {
+		return fmt.Errorf("tailscale: %v", err)
+	}
+	return nil
 }
 
 // onceLogf returns a logger that suppresses repeated messages.
@@ -121,40 +131,19 @@ func onceLogf(f func(string, ...any)) func(string, ...any) {
 	}
 }
 
-// tailConn is a connection over the tailnet; closing it also
-// shuts down the local tsnet node.
-type tailConn struct {
-	net.Conn
-	srv *tsnet.Server
-}
-
-func (c *tailConn) Close() error {
-	err := c.Conn.Close()
-	c.srv.Close()
-	return err
-}
-
-// dialTail connects to a tail://name server over Tailscale.
+// dialTail connects to a tail://name server over Tailscale,
+// through the daemon holding this machine's node.
 func dialTail(u *url.URL) (io.ReadWriteCloser, error) {
 	server := u.Host
 	if server == "" {
 		return nil, fmt.Errorf("server URL must have the form tail://name")
 	}
-	srv := tsnetServer(clientTailName())
-	ctx := context.Background()
-	if _, err := srv.Up(ctx); err != nil {
-		srv.Close()
-		return nil, fmt.Errorf("tailscale: %v", err)
-	}
-	conn, err := srv.Dial(ctx, "tcp", fmt.Sprintf("mote-%s:%d", server, tailPort))
-	if err != nil {
-		srv.Close()
-		return nil, fmt.Errorf("dial mote-%s: %v", server, err)
-	}
-	return &tailConn{Conn: conn, srv: srv}, nil
+	return daemonDial(clientTailName(), fmt.Sprintf("mote-%s:%d", server, tailPort))
 }
 
-// serveTail implements "mote serve tail://name" (or "mote serve tail:").
+// serveTail implements "mote serve tail://name" (or "mote serve tail:"),
+// asking the daemon holding the node to serve the tailnet and printing
+// the daemon's log output until interrupted.
 func serveTail(rawURL string) {
 	var name string
 	if rawURL == "tail:" || rawURL == "tail://" {
@@ -170,17 +159,9 @@ func serveTail(rawURL string) {
 		}
 		name = u.Host
 	}
-	srv := tsnetServer(name)
-	defer srv.Close()
-	if _, err := srv.Up(context.Background()); err != nil {
-		log.Fatalf("tailscale: %v", err)
-	}
-	ln, err := srv.Listen("tcp", fmt.Sprintf(":%d", tailPort))
-	if err != nil {
+	if err := daemonServe(name); err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("serving tail://%s", name)
-	serveListener(ln, "")
 }
 
 // cmdLogin implements "mote login URL", establishing Tailscale
@@ -193,10 +174,8 @@ func cmdLogin(args []string) {
 	if err != nil || u.Scheme != "tail" || u.Host == "" {
 		log.Fatalf("login URL must have the form tail://name")
 	}
-	srv := tsnetServer(u.Host)
-	defer srv.Close()
-	if _, err := srv.Up(context.Background()); err != nil {
-		log.Fatalf("tailscale: %v", err)
+	if err := tailLogin(u.Host); err != nil {
+		log.Fatal(err)
 	}
 	log.Printf("logged in as mote-%s", u.Host)
 }

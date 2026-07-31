@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -26,7 +27,7 @@ func cmdServe(args []string) {
 	url := args[0]
 	switch {
 	case url == "-":
-		if err := serve(stdioConn{}, ""); err != nil {
+		if err := serve(stdioConn{}, "", nil); err != nil {
 			log.Fatal(err)
 		}
 	case strings.HasPrefix(url, "tcp://"):
@@ -53,15 +54,17 @@ const maxSessions = 64
 
 // serveListener accepts connections on ln and serves a session on each,
 // using password to encrypt the session (or "" for transports that are
-// already secure). It does not return.
-func serveListener(ln net.Listener, password string) {
+// already secure) and env as the base environment for the commands it
+// runs (or nil for this process's environment).
+// It returns when ln is closed.
+func serveListener(ln net.Listener, password string, env []string) error {
 	sem := make(chan struct{}, maxSessions)
 	var delay time.Duration
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
-				log.Fatal(err)
+				return err
 			}
 			// Transient failure, such as running out of file descriptors.
 			// Back off and keep serving instead of killing the server:
@@ -76,7 +79,7 @@ func serveListener(ln net.Listener, password string) {
 		go func() {
 			defer func() { <-sem }()
 			defer conn.Close()
-			if err := serve(conn, password); err != nil {
+			if err := serve(conn, password, env); err != nil {
 				log.Print(err)
 			}
 		}()
@@ -86,8 +89,9 @@ func serveListener(ln net.Listener, password string) {
 // serve runs one server session on rw: handshake, optional encryption,
 // setup and file upload, command execution, output streaming, exit status.
 // It is the entire server; every transport ends up here.
-// It does not close rw.
-func serve(rw io.ReadWriteCloser, password string) error {
+// The command runs with env as its base environment, or this process's
+// environment if env is nil. It does not close rw.
+func serve(rw io.ReadWriteCloser, password string, env []string) error {
 	// Bound how long an unauthenticated peer can hold the connection.
 	// The deadline is cleared once the session is established, because
 	// the commands that follow can take arbitrarily long.
@@ -214,7 +218,10 @@ func serve(rw io.ReadWriteCloser, password string) error {
 	c := exec.Command(req.Args[0])
 	c.Args = req.Args
 	c.Dir = dir
-	c.Env = append(os.Environ(), req.Env...)
+	if env == nil {
+		env = os.Environ()
+	}
+	c.Env = slices.Concat(env, req.Env) // Concat, not append: env may be shared
 	setpgid(c)
 	stdout, err := c.StdoutPipe()
 	if err != nil {

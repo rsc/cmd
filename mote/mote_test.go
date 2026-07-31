@@ -7,6 +7,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -45,7 +46,7 @@ func runPipe(t *testing.T, password string, files []*File, dir string, args []st
 	defer cconn.Close()
 	done := make(chan error, 1)
 	go func() {
-		done <- serve(sconn, password)
+		done <- serve(sconn, password, nil)
 		sconn.Close()
 	}()
 	conn, err := clientConn(cconn, password)
@@ -166,7 +167,7 @@ func startServeClient(t *testing.T, password string) *Conn {
 	t.Helper()
 	cconn, sconn := net.Pipe()
 	go func() {
-		serve(sconn, password)
+		serve(sconn, password, nil)
 		sconn.Close()
 	}()
 	t.Cleanup(func() { cconn.Close() })
@@ -318,9 +319,26 @@ func sshMockMain() {
 			log.Fatalf("missing %q in args: %s", want, args)
 		}
 	}
+	if msg := os.Getenv("MOTE_TEST_SSH_FAIL"); msg != "" {
+		// Simulate ssh failing to connect: diagnostics on standard error,
+		// no server hello.
+		fmt.Fprintf(os.Stderr, "%s\n", msg)
+		os.Exit(255)
+	}
+	if msg := os.Getenv("MOTE_TEST_SSH_DIE"); msg != "" {
+		// Simulate the connection dying mid-session: the handshake and
+		// Info exchange succeed, and then the connection is gone.
+		if err := serverHandshake(stdioConn{}); err != nil {
+			log.Fatal(err)
+		}
+		conn := newConn(stdioConn{})
+		conn.writePacket(&Response{Type: "Info", GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}, nil)
+		fmt.Fprintf(os.Stderr, "%s\n", msg)
+		os.Exit(255)
+	}
 	// A login banner, to exercise the client's preamble scanning.
 	fmt.Printf("Welcome to kremvax.\nUnauthorized access is prohibited.\n")
-	if err := serve(stdioConn{}, ""); err != nil {
+	if err := serve(stdioConn{}, "", nil); err != nil {
 		log.Fatal(err)
 	}
 	os.Exit(0)
@@ -335,6 +353,38 @@ func TestSSHTransport(t *testing.T) {
 	}
 	defer conn.Close()
 	runConn(t, conn, []string{"echo", "over ssh"}, "over ssh\n")
+}
+
+func TestSSHTransportError(t *testing.T) {
+	// A failed handshake must report the transport's standard error text,
+	// which usually explains what went wrong.
+	setupDirs(t)
+	mockPATH(t, "ssh")
+	t.Setenv("MOTE_TEST_SSH_FAIL", "ssh: connect to host kremvax port 22: Connection refused")
+	_, err := dialServer("ssh://kremvax")
+	if err == nil || !strings.Contains(err.Error(), "Connection refused") {
+		t.Fatalf("dialServer: %v, want ssh stderr in error", err)
+	}
+}
+
+func TestSSHTransportSessionError(t *testing.T) {
+	// A protocol failure after the handshake must also report the
+	// transport's standard error text, via Conn.abort.
+	setupDirs(t)
+	mockPATH(t, "ssh")
+	t.Setenv("MOTE_TEST_SSH_DIE", "Connection to kremvax closed by remote host.")
+	conn, err := dialServer("ssh://kremvax")
+	if err != nil {
+		t.Fatalf("dialServer: %v", err)
+	}
+	_, err = conn.Run(&Exec{Args: []string{"echo", "hi"}, Dir: "/mote-test", Stdout: io.Discard, Stderr: io.Discard})
+	if err == nil {
+		t.Fatal("Run succeeded, want error")
+	}
+	err = conn.abort(err)
+	if !strings.Contains(err.Error(), "closed by remote host") {
+		t.Fatalf("abort: %v, want ssh stderr in error", err)
+	}
 }
 
 // The gomote mock takes direction from the test environment:
@@ -397,11 +447,25 @@ func gomoteMockMain() {
 		}
 		os.Exit(0)
 	case "ssh":
-		want := []string{"ssh", inst, "./mote", "serve", "-"}
-		if strings.Join(os.Args[1:], " ") != strings.Join(want, " ") {
+		// Like the real gomote ssh: only an instance name, no command;
+		// print the underlying ssh invocation, and hand the connection
+		// to a "shell" that reads a command line from standard input.
+		if len(os.Args) != 3 || os.Args[2] != inst {
 			log.Fatalf("bad ssh args: %v", os.Args)
 		}
-		if err := serve(stdioConn{}, ""); err != nil {
+		fmt.Printf("$ /usr/bin/ssh -p 2222 %s@gomotessh.golang.org\n", inst)
+		var line []byte
+		var b [1]byte
+		for b[0] != '\n' {
+			if _, err := os.Stdin.Read(b[:]); err != nil {
+				log.Fatalf("reading command: %v", err)
+			}
+			line = append(line, b[0])
+		}
+		if string(line) != "exec ./mote serve -\n" {
+			log.Fatalf("bad shell command %q", line)
+		}
+		if err := serve(stdioConn{}, "", nil); err != nil {
 			log.Fatal(err)
 		}
 		os.Exit(0)

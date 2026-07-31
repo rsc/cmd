@@ -51,7 +51,7 @@ func cmdRun(args []string) {
 		Stderr: os.Stderr,
 	})
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(conn.abort(err))
 	}
 	if conn.GOOS != "" && conn.GOARCH != "" {
 		name := conn.GOOS + "-" + conn.GOARCH

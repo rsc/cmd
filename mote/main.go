@@ -67,6 +67,10 @@ func main() {
 		cmdGoSetup(args[1:])
 	case "version":
 		cmdVersion(args[1:])
+	case "tail-daemon":
+		// Not in usageMessage: mote runs this for itself,
+		// in the background. See taildaemon.go.
+		cmdTailDaemon(args[1:])
 	default:
 		cmdRun(args)
 	}

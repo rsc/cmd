@@ -27,7 +27,7 @@ func TestTCPTransport(t *testing.T) {
 			}
 			go func() {
 				defer conn.Close()
-				serve(conn, "s3cret")
+				serve(conn, "s3cret", nil)
 			}()
 		}
 	}()
