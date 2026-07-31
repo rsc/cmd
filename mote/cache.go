@@ -9,11 +9,48 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
+	"time"
 )
+
+// cacheMaxAge is how long an unused cached file survives cleanCache.
+const cacheMaxAge = 3 * time.Hour
+
+// cmdClean implements "mote clean", deleting the entire cache.
+func cmdClean(args []string) {
+	if len(args) != 0 {
+		usage()
+	}
+	if err := os.RemoveAll(cacheDir()); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// cleanCache deletes cached files that have gone unused for longer
+// than cacheMaxAge. (inCache updates the modification time of the
+// files it finds, so recently used files are safe.)
+func cleanCache() {
+	dir := cacheDir()
+	cutoff := time.Now().Add(-cacheMaxAge)
+	shards, _ := os.ReadDir(dir)
+	for _, shard := range shards {
+		if !shard.IsDir() {
+			continue
+		}
+		files, _ := os.ReadDir(filepath.Join(dir, shard.Name()))
+		for _, f := range files {
+			info, err := f.Info()
+			if err == nil && info.ModTime().Before(cutoff) {
+				os.Remove(filepath.Join(dir, shard.Name(), f.Name()))
+			}
+		}
+	}
+}
 
 // validHash reports whether hash is a well-formed lowercase hex SHA-256,
 // safe to use as a file name in the cache.
@@ -36,10 +73,16 @@ func cacheFile(hash string) string {
 }
 
 // inCache reports whether the file with the given hash and size
-// is already in the cache.
+// is already in the cache, marking it recently used if so.
 func inCache(hash string, size int64) bool {
-	info, err := os.Stat(cacheFile(hash))
-	return err == nil && info.Size() == size
+	file := cacheFile(hash)
+	info, err := os.Stat(file)
+	if err != nil || info.Size() != size {
+		return false
+	}
+	now := time.Now()
+	os.Chtimes(file, now, now)
+	return true
 }
 
 // saveToCache reads size bytes from r and saves them in the cache,
@@ -106,9 +149,9 @@ func remotePath(tmpdir, slashPath string) (string, error) {
 	if len(p) >= 2 && p[1] == ':' { // Windows volume like C:
 		p = p[2:]
 	}
-	p = path.Clean("/" + p) // now absolute and .. -free above root
-	if strings.Contains(p, `\`) {
+	if strings.Contains(p, `\`) || slices.Contains(strings.Split(p, "/"), "..") {
 		return "", fmt.Errorf("invalid path %#q", slashPath)
 	}
+	p = path.Clean("/" + p) // now absolute
 	return filepath.Join(tmpdir, filepath.FromSlash(p)), nil
 }

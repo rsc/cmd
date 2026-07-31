@@ -21,7 +21,7 @@ import (
 // and then a Noise NNpsk0 handshake using that key as the pre-shared key
 // establishes the encrypted channel.
 // The handshake messages travel in the standard packet framing
-// with no JSON section. See the PROTOCOL comment in doc.go.
+// with no JSON section. See protocol.md.
 
 // channelID is the CPace channel identifier, fixed for the mote protocol.
 var channelID = []byte("rsc.io/cmd/mote tcp")
@@ -35,16 +35,21 @@ func derivePSK(key []byte) ([]byte, error) {
 // secureServer runs the server side of the encryption handshake,
 // returning an encrypted channel layered over rw.
 // The server is the CPace initiator and the Noise responder.
-func secureServer(rw io.ReadWriter, password string) (io.ReadWriter, error) {
-	pc := newPacketConn(rw)
+func secureServer(rw io.ReadWriteCloser, password string) (_ io.ReadWriteCloser, err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("securing session: %w", err)
+		}
+	}()
+	c := newConn(rw)
 	st, msg1, err := cpace.Start(&cpace.Config{Role: cpace.Initiator, Password: []byte(password), ChannelID: channelID})
 	if err != nil {
 		return nil, err
 	}
-	if err := pc.writePacket(nil, msg1); err != nil {
+	if err := c.writePacket(nil, msg1); err != nil {
 		return nil, err
 	}
-	msg2, err := pc.readPacket(nil)
+	msg2, err := c.readPacket(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -52,10 +57,10 @@ func secureServer(rw io.ReadWriter, password string) (io.ReadWriter, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := pc.writePacket(nil, st.Tag()); err != nil {
+	if err := c.writePacket(nil, st.Tag()); err != nil {
 		return nil, err
 	}
-	tag, err := pc.readPacket(nil)
+	tag, err := c.readPacket(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -70,7 +75,7 @@ func secureServer(rw io.ReadWriter, password string) (io.ReadWriter, error) {
 	if err != nil {
 		return nil, err
 	}
-	m1, err := pc.readPacket(nil)
+	m1, err := c.readPacket(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +86,7 @@ func secureServer(rw io.ReadWriter, password string) (io.ReadWriter, error) {
 	if err != nil {
 		return nil, fmt.Errorf("noise handshake: %v", err)
 	}
-	if err := pc.writePacket(nil, m2); err != nil {
+	if err := c.writePacket(nil, m2); err != nil {
 		return nil, err
 	}
 	return &secureStream{rw: rw, enc: cs2, dec: cs1}, nil
@@ -90,9 +95,14 @@ func secureServer(rw io.ReadWriter, password string) (io.ReadWriter, error) {
 // secureClient runs the client side of the encryption handshake,
 // returning an encrypted channel layered over rw.
 // The client is the CPace responder and the Noise initiator.
-func secureClient(rw io.ReadWriter, password string) (io.ReadWriter, error) {
-	pc := newPacketConn(rw)
-	msg1, err := pc.readPacket(nil)
+func secureClient(rw io.ReadWriteCloser, password string) (_ io.ReadWriteCloser, err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("securing session: %w", err)
+		}
+	}()
+	c := newConn(rw)
+	msg1, err := c.readPacket(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -104,17 +114,17 @@ func secureClient(rw io.ReadWriter, password string) (io.ReadWriter, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := pc.writePacket(nil, msg2); err != nil {
+	if err := c.writePacket(nil, msg2); err != nil {
 		return nil, err
 	}
-	tag, err := pc.readPacket(nil)
+	tag, err := c.readPacket(nil)
 	if err != nil {
 		return nil, err
 	}
 	if err := st.Verify(tag); err != nil {
 		return nil, fmt.Errorf("incorrect password for server")
 	}
-	if err := pc.writePacket(nil, st.Tag()); err != nil {
+	if err := c.writePacket(nil, st.Tag()); err != nil {
 		return nil, err
 	}
 	psk, err := derivePSK(key)
@@ -129,10 +139,10 @@ func secureClient(rw io.ReadWriter, password string) (io.ReadWriter, error) {
 	if err != nil {
 		return nil, fmt.Errorf("noise handshake: %v", err)
 	}
-	if err := pc.writePacket(nil, m1); err != nil {
+	if err := c.writePacket(nil, m1); err != nil {
 		return nil, err
 	}
-	m2, err := pc.readPacket(nil)
+	m2, err := c.readPacket(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -151,7 +161,7 @@ const maxNoisePlaintext = 65535 - 16
 // Each Noise transport message is framed by a 16-bit big-endian
 // ciphertext length.
 type secureStream struct {
-	rw   io.ReadWriter
+	rw   io.ReadWriteCloser
 	enc  *noise.CipherState
 	dec  *noise.CipherState
 	rbuf []byte
@@ -198,4 +208,8 @@ func (s *secureStream) Write(p []byte) (int, error) {
 		total += n
 	}
 	return total, nil
+}
+
+func (s *secureStream) Close() error {
+	return s.rw.Close()
 }

@@ -20,8 +20,7 @@ import (
 func cmdRun(args []string) {
 	server := ""
 	if strings.HasPrefix(args[0], "@") {
-		server = args[0][1:]
-		args = args[1:]
+		server, args = args[0][1:], args[1:]
 		if len(args) == 0 {
 			usage()
 		}
@@ -38,27 +37,33 @@ func cmdRun(args []string) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	rwc, password, err := dialServer(url)
+	conn, err := dialServer(url)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer rwc.Close()
+	defer conn.Close()
 
-	exitCode, status, goos, goarch, err := runSession(rwc, password, files, filepath.ToSlash(dir), args, os.Stdout, os.Stderr)
+	w, err := conn.Run(&Exec{
+		Args:   args,
+		Dir:    filepath.ToSlash(dir),
+		Files:  files,
+		Stdout: os.Stdout,
+		Stderr: os.Stderr,
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
-	if goos != "" && goarch != "" {
-		name := goos + "-" + goarch
+	if conn.GOOS != "" && conn.GOARCH != "" {
+		name := conn.GOOS + "-" + conn.GOARCH
 		if url2, err := lookupAlias(name); err == nil && url2 == "" {
 			setAlias(name, url)
 		}
 	}
-	if exitCode < 0 {
-		log.Fatalf("remote command killed: %s", status)
+	if w.Code < 0 {
+		log.Fatalf("remote command killed: %s", w.Status)
 	}
-	rwc.Close()
-	os.Exit(exitCode)
+	conn.Close()
+	os.Exit(w.Code)
 }
 
 // goosGoarchRE matches a plausible $GOOS-$GOARCH pair like linux-amd64.
@@ -96,60 +101,61 @@ func resolveServer(name, cmdName string, files []*File) (string, error) {
 	}
 	if goosGoarchRE.MatchString(name) {
 		if _, err := exec.LookPath("gomote"); err == nil {
-			return "gomote://gotip-" + name, nil
+			goos, goarch, _ := strings.Cut(name, "-")
+			builder, err := gomoteBuilder(goos, goarch)
+			if err != nil {
+				return "", err
+			}
+			return "gomote://" + builder, nil
 		}
 	}
 	return "", fmt.Errorf("no alias for %s", name)
 }
 
-// runSession runs one client session on rw: handshake, optional
-// encryption, Run request, upload, output streaming, exit status.
-func runSession(rw io.ReadWriter, password string, files []*File, dir string, args []string, stdout, stderr io.Writer) (exitCode int, status, goos, goarch string, err error) {
-	fail := func(err error) (int, string, string, string, error) {
-		return 0, "", goos, goarch, err
+// An Exec describes a command to run on a server.
+type Exec struct {
+	Args   []string  // command arguments; Args[0] is the command itself
+	Dir    string    // client working directory, in slash form
+	Files  []*File   // files to place on the server
+	Env    []string  // extra environment variables
+	Stdout io.Writer // destination for standard output
+	Stderr io.Writer // destination for standard error
+}
+
+// A Wait describes how a command finished.
+type Wait struct {
+	Code   int    // exit code (negative if killed by a signal)
+	Status string // os.ProcessState description of the exit
+}
+
+// Run runs the command described by e on the server at the
+// other end of c: setup, upload, start, output streaming, exit status.
+func (c *Conn) Run(e *Exec) (*Wait, error) {
+	req := &Request{
+		Type:  "Setup",
+		Files: e.Files,
+		Args:  e.Args,
+		Dir:   e.Dir,
+		Env:   e.Env,
 	}
-	if err := clientHandshake(rw); err != nil {
-		return fail(err)
-	}
-	if password != "" {
-		s, err := secureClient(rw, password)
-		if err != nil {
-			return fail(err)
-		}
-		rw = s
-	}
-	pc := newPacketConn(rw)
-	err = pc.writePacket(&Request{
-		Type:  "Run",
-		Files: files,
-		Cmd:   args[0],
-		Args:  args,
-		Dir:   dir,
-	}, nil)
-	if err != nil {
-		return fail(err)
+	if err := c.writePacket(req, nil); err != nil {
+		return nil, err
 	}
 
+	// Answer Need with the upload, until the server says Ready.
 	byHash := make(map[string]*File)
-	for _, f := range files {
+	for _, f := range e.Files {
 		byHash[f.Hash] = f
 	}
-	var sig chan os.Signal
+Setup:
 	for {
-		var resp Response
-		data, err := pc.readPacket(&resp)
+		resp, _, err := c.readResponse()
 		if err != nil {
-			return fail(fmt.Errorf("reading response: %v", err))
-		}
-		if resp.GOOS != "" {
-			goos, goarch = resp.GOOS, resp.GOARCH
-		}
-		if resp.Error != "" {
-			return fail(fmt.Errorf("server: %s", resp.Error))
+			return nil, err
 		}
 		switch resp.Type {
 		default:
-			return fail(fmt.Errorf("unexpected response type %q", resp.Type))
+			return nil, fmt.Errorf("unexpected response type %q", resp.Type)
 
 		case "Need":
 			var readers []io.Reader
@@ -157,38 +163,68 @@ func runSession(rw io.ReadWriter, password string, files []*File, dir string, ar
 			for _, hash := range resp.Need {
 				f := byHash[hash]
 				if f == nil {
-					return fail(fmt.Errorf("server needs unknown hash %s", hash))
+					return nil, fmt.Errorf("server needs unknown hash %s", hash)
 				}
 				readers = append(readers, io.LimitReader(&lazyFile{name: filepath.FromSlash(f.Path)}, f.Size))
 				size += f.Size
 			}
-			if err := pc.writePacketStream(&Request{Type: "Upload"}, size, io.MultiReader(readers...)); err != nil {
-				return fail(fmt.Errorf("upload: %v", err))
+			if err := c.writePacketStream(&Request{Type: "Upload"}, size, io.MultiReader(readers...)); err != nil {
+				return nil, fmt.Errorf("upload: %v", err)
 			}
 
-		case "Start":
-			// Command is running; forward interrupts as Kill requests.
-			sig = make(chan os.Signal, 1)
-			signal.Notify(sig, os.Interrupt)
-			go func() {
-				<-sig
-				pc.writePacket(&Request{Type: "Kill"}, nil)
-				<-sig
-				os.Exit(1)
-			}()
+		case "Ready":
+			break Setup
+		}
+	}
+
+	// The command is about to run; forward interrupts as Kill requests.
+	// The connection's write lock keeps a Kill from interleaving with
+	// the Start packet.
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt)
+	defer signal.Stop(sig)
+	go func() {
+		<-sig
+		c.writePacket(&Request{Type: "Kill"}, nil)
+		<-sig
+		os.Exit(1)
+	}()
+
+	if err := c.writePacket(&Request{Type: "Start"}, nil); err != nil {
+		return nil, err
+	}
+	for {
+		resp, data, err := c.readResponse()
+		if err != nil {
+			return nil, err
+		}
+		switch resp.Type {
+		default:
+			return nil, fmt.Errorf("unexpected response type %q", resp.Type)
 
 		case "Output":
-			w := stdout
+			w := e.Stdout
 			if resp.Stderr {
-				w = stderr
+				w = e.Stderr
 			}
 			w.Write(data)
 
 		case "Exit":
-			if sig != nil {
-				signal.Stop(sig)
-			}
-			return resp.ExitCode, resp.Status, goos, goarch, nil
+			return &Wait{Code: resp.ExitCode, Status: resp.Status}, nil
 		}
 	}
+}
+
+// readResponse reads one response packet,
+// turning a Response with Error set into an error.
+func (c *Conn) readResponse() (*Response, []byte, error) {
+	var resp Response
+	data, err := c.readPacket(&resp)
+	if err != nil {
+		return nil, nil, fmt.Errorf("reading response: %v", err)
+	}
+	if resp.Error != "" {
+		return nil, nil, fmt.Errorf("server: %s", resp.Error)
+	}
+	return &resp, data, nil
 }

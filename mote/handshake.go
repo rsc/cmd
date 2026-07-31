@@ -5,8 +5,10 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 )
@@ -28,9 +30,15 @@ const (
 	helloTimeout = 60 * time.Second
 )
 
+// A deadlineReader is a reader with read deadlines,
+// as implemented by net.Conn and *os.File.
+type deadlineReader interface {
+	SetReadDeadline(time.Time) error
+}
+
 // clientHandshake reads the connection preamble and server hello
 // and then sends the client hello.
-// See the PROTOCOL comment in doc.go.
+// See protocol.md.
 func clientHandshake(rw io.ReadWriter) error {
 	if err := scanServerHello(rw); err != nil {
 		return err
@@ -47,27 +55,20 @@ func clientHandshake(rw io.ReadWriter) error {
 // than helloTimeout, or hangs up, scanServerHello reports the text as an
 // error message. It reads one byte at a time, so it never consumes bytes
 // beyond the hello line's newline.
+//
+// The connection is a network connection or a pipe (*os.File), both of
+// which implement read deadlines; the stall timeout uses those.
+// If r has no working SetReadDeadline, scanServerHello reads without
+// a timeout.
 func scanServerHello(r io.Reader) error {
-	type readResult struct {
-		b   byte
-		err error
-	}
-	req := make(chan struct{})
-	results := make(chan readResult, 1)
-	go func() {
-		var buf [1]byte
-		for range req {
-			_, err := io.ReadFull(r, buf[:])
-			results <- readResult{buf[0], err}
-			if err != nil {
-				return
-			}
+	rd, _ := r.(deadlineReader)
+	if rd != nil {
+		if err := rd.SetReadDeadline(time.Now().Add(helloTimeout)); err != nil {
+			rd = nil
+		} else {
+			defer rd.SetReadDeadline(time.Time{})
 		}
-	}()
-	defer close(req)
-
-	timer := time.NewTimer(helloTimeout)
-	defer timer.Stop()
+	}
 
 	var preamble, line []byte
 	fail := func(format string, args ...any) error {
@@ -80,27 +81,23 @@ func scanServerHello(r io.Reader) error {
 		}
 		return fmt.Errorf(format, args...)
 	}
+	var buf [1]byte
 	for {
-		req <- struct{}{}
-		var r readResult
-		select {
-		case r = <-results:
-		case <-timer.C:
-			return fail("timeout waiting for server hello")
-		}
-		if r.err != nil {
-			if r.err == io.EOF || r.err == io.ErrUnexpectedEOF {
+		if _, err := io.ReadFull(r, buf[:]); err != nil {
+			if errors.Is(err, os.ErrDeadlineExceeded) {
+				return fail("timeout waiting for server hello")
+			}
+			if err == io.EOF || err == io.ErrUnexpectedEOF {
 				return fail("connection closed waiting for server hello")
 			}
-			return fail("reading server hello: %v", r.err)
+			return fail("reading server hello: %v", err)
 		}
-		if !timer.Stop() {
-			<-timer.C
+		if rd != nil {
+			rd.SetReadDeadline(time.Now().Add(helloTimeout))
 		}
-		timer.Reset(helloTimeout)
 
-		line = append(line, r.b)
-		if r.b != '\n' {
+		line = append(line, buf[0])
+		if buf[0] != '\n' {
 			if len(preamble)+len(line) > maxPreamble {
 				return fail("no server hello in first %d bytes", maxPreamble)
 			}
@@ -118,7 +115,7 @@ func scanServerHello(r io.Reader) error {
 }
 
 // serverHandshake sends the server hello and reads the client hello.
-// See the PROTOCOL comment in doc.go.
+// See protocol.md.
 func serverHandshake(rw io.ReadWriter) error {
 	if _, err := io.WriteString(rw, serverHello); err != nil {
 		return fmt.Errorf("write server hello: %v", err)

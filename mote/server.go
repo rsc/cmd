@@ -35,16 +35,18 @@ func cmdServe(args []string) {
 	}
 }
 
-// stdioConn is an io.ReadWriter for serving on standard input and output.
+// stdioConn is an io.ReadWriteCloser for serving on standard input and output.
 type stdioConn struct{}
 
 func (stdioConn) Read(p []byte) (int, error)  { return os.Stdin.Read(p) }
 func (stdioConn) Write(p []byte) (int, error) { return os.Stdout.Write(p) }
+func (stdioConn) Close() error                { return nil }
 
 // serve runs one server session on rw: handshake, optional encryption,
-// file upload, command execution, output streaming, exit status.
+// setup and file upload, command execution, output streaming, exit status.
 // It is the entire server; every transport ends up here.
-func serve(rw io.ReadWriter, password string) error {
+// It does not close rw.
+func serve(rw io.ReadWriteCloser, password string) error {
 	if err := serverHandshake(rw); err != nil {
 		return err
 	}
@@ -55,38 +57,31 @@ func serve(rw io.ReadWriter, password string) error {
 		}
 		rw = s
 	}
-	pc := newPacketConn(rw)
+	conn := newConn(rw)
 
-	// GOOS and GOARCH ride on the first response of the session.
-	sentInfo := false
-	info := func(r *Response) *Response {
-		if !sentInfo {
-			sentInfo = true
-			r.GOOS = runtime.GOOS
-			r.GOARCH = runtime.GOARCH
-		}
-		return r
+	if err := conn.writePacket(&Response{Type: "Info", GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}, nil); err != nil {
+		return err
 	}
 	fail := func(format string, args ...any) error {
 		err := fmt.Errorf(format, args...)
-		pc.writePacket(info(&Response{Type: "Exit", Error: err.Error()}), nil)
+		conn.writePacket(&Response{Type: "Exit", Error: err.Error()}, nil)
 		return err
 	}
 
 	var req Request
-	if _, err := pc.readPacket(&req); err != nil {
+	if _, err := conn.readPacket(&req); err != nil {
 		return fmt.Errorf("reading request: %v", err)
 	}
-	if req.Type != "Run" {
+	if req.Type != "Setup" {
 		return fail("unexpected request type %q", req.Type)
 	}
-	if len(req.Args) == 0 || req.Cmd == "" {
-		return fail("malformed Run request")
+	if len(req.Args) == 0 {
+		return fail("malformed Setup request")
 	}
 	sizes := make(map[string]int64)
 	for _, f := range req.Files {
 		if !validHash(f.Hash) || f.Size < 0 {
-			return fail("malformed file %q in Run request", f.Path)
+			return fail("malformed file %q in Setup request", f.Path)
 		}
 		sizes[f.Hash] = f.Size
 	}
@@ -101,11 +96,11 @@ func serve(rw io.ReadWriter, password string) error {
 		}
 	}
 	if len(need) > 0 {
-		if err := pc.writePacket(info(&Response{Type: "Need", Need: need}), nil); err != nil {
+		if err := conn.writePacket(&Response{Type: "Need", Need: need}, nil); err != nil {
 			return err
 		}
 		var up Request
-		size, body, err := pc.readPacketStream(&up)
+		size, body, err := conn.readPacketStream(&up)
 		if err != nil {
 			return fmt.Errorf("reading upload: %v", err)
 		}
@@ -149,8 +144,23 @@ func serve(rw io.ReadWriter, password string) error {
 		return fail("%v", err)
 	}
 
+	// Everything is in place; wait for the Start request.
+	if err := conn.writePacket(&Response{Type: "Ready"}, nil); err != nil {
+		return err
+	}
+	var start Request
+	if _, err := conn.readPacket(&start); err != nil {
+		return fmt.Errorf("reading request: %v", err)
+	}
+	if start.Type == "Kill" {
+		return fail("killed before start")
+	}
+	if start.Type != "Start" {
+		return fail("unexpected request type %q", start.Type)
+	}
+
 	// Start the command.
-	c := exec.Command(req.Cmd)
+	c := exec.Command(req.Args[0])
 	c.Args = req.Args
 	c.Dir = dir
 	c.Env = append(os.Environ(), req.Env...)
@@ -166,11 +176,6 @@ func serve(rw io.ReadWriter, password string) error {
 	if err := c.Start(); err != nil {
 		return fail("%v", err)
 	}
-	if err := pc.writePacket(info(&Response{Type: "Start"}), nil); err != nil {
-		killGroup(c)
-		c.Wait()
-		return err
-	}
 
 	// Watch for a Kill request (or a hangup) from the client.
 	// The exited check avoids killing a reused pid after the command is gone.
@@ -178,7 +183,7 @@ func serve(rw io.ReadWriter, password string) error {
 	go func() {
 		for {
 			var req Request
-			if _, err := pc.readPacket(&req); err != nil || req.Type == "Kill" {
+			if _, err := conn.readPacket(&req); err != nil || req.Type == "Kill" {
 				select {
 				case <-exited:
 				default:
@@ -191,31 +196,33 @@ func serve(rw io.ReadWriter, password string) error {
 
 	// Stream output until both pipes close, then report the exit status.
 	var wg sync.WaitGroup
-	for _, out := range []struct {
-		r      io.Reader
-		stderr bool
-	}{{stdout, false}, {stderr, true}} {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			buf := make([]byte, 32<<10)
-			for {
-				n, err := out.r.Read(buf)
-				if n > 0 {
-					if err := pc.writePacket(&Response{Type: "Output", Stderr: out.stderr}, buf[:n]); err != nil {
-						killGroup(c)
-						return
-					}
-				}
-				if err != nil {
-					return
-				}
-			}
-		}()
-	}
+	wg.Add(2)
+	go copyOutput(&wg, conn, c, stdout, false)
+	go copyOutput(&wg, conn, c, stderr, true)
 	wg.Wait()
 	c.Wait()
 	close(exited)
+	cleanCache()
 	ps := c.ProcessState
-	return pc.writePacket(info(&Response{Type: "Exit", ExitCode: ps.ExitCode(), Status: ps.String()}), nil)
+	return conn.writePacket(&Response{Type: "Exit", ExitCode: ps.ExitCode(), Status: ps.String()}, nil)
+}
+
+// copyOutput streams the command output read from r to the client
+// as Output responses, killing the command if the client is gone.
+// It decrements wg when the output pipe closes.
+func copyOutput(wg *sync.WaitGroup, conn *Conn, c *exec.Cmd, r io.Reader, stderr bool) {
+	defer wg.Done()
+	buf := make([]byte, 32<<10)
+	for {
+		n, err := r.Read(buf)
+		if n > 0 {
+			if err := conn.writePacket(&Response{Type: "Output", Stderr: stderr}, buf[:n]); err != nil {
+				killGroup(c)
+				return
+			}
+		}
+		if err != nil {
+			return
+		}
+	}
 }

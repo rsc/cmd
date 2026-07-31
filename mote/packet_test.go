@@ -13,14 +13,18 @@ import (
 	"testing"
 )
 
-func TestPacketRoundTrip(t *testing.T) {
-	var buf bytes.Buffer
-	pc := newPacketConn(struct {
-		io.Reader
-		io.Writer
-	}{&buf, &buf})
+// bufConn adapts a bytes.Buffer into the io.ReadWriteCloser
+// needed by newConn.
+type bufConn struct {
+	*bytes.Buffer
+}
 
-	req := &Request{Type: "Run", Cmd: "./x", Args: []string{"./x", "-v"}, Dir: "/home/gopher",
+func (bufConn) Close() error { return nil }
+
+func TestPacketRoundTrip(t *testing.T) {
+	pc := newConn(bufConn{new(bytes.Buffer)})
+
+	req := &Request{Type: "Setup", Args: []string{"./x", "-v"}, Dir: "/home/gopher",
 		Files: []*File{{Path: "/home/gopher/x", Hash: strings.Repeat("ab", 32), Size: 5}}}
 	if err := pc.writePacket(req, []byte("hello")); err != nil {
 		t.Fatal(err)
@@ -36,11 +40,8 @@ func TestPacketRoundTrip(t *testing.T) {
 }
 
 func TestPacketNoJSON(t *testing.T) {
-	var buf bytes.Buffer
-	pc := newPacketConn(struct {
-		io.Reader
-		io.Writer
-	}{&buf, &buf})
+	buf := new(bytes.Buffer)
+	pc := newConn(bufConn{buf})
 	if err := pc.writePacket(nil, []byte("raw")); err != nil {
 		t.Fatal(err)
 	}
@@ -55,11 +56,7 @@ func TestPacketNoJSON(t *testing.T) {
 }
 
 func TestPacketStream(t *testing.T) {
-	var buf bytes.Buffer
-	pc := newPacketConn(struct {
-		io.Reader
-		io.Writer
-	}{&buf, &buf})
+	pc := newConn(bufConn{new(bytes.Buffer)})
 	content := strings.Repeat("data", 1000)
 	if err := pc.writePacketStream(&Request{Type: "Upload"}, int64(len(content)), strings.NewReader(content)); err != nil {
 		t.Fatal(err)
@@ -76,27 +73,28 @@ func TestPacketStream(t *testing.T) {
 }
 
 func TestPacketJSONTooLarge(t *testing.T) {
-	var buf bytes.Buffer
+	buf := new(bytes.Buffer)
 	var hdr [8]byte
 	binary.BigEndian.PutUint32(hdr[0:], maxJSON+1)
 	buf.Write(hdr[:])
-	pc := newPacketConn(struct {
-		io.Reader
-		io.Writer
-	}{&buf, &buf})
+	pc := newConn(bufConn{buf})
 	if _, err := pc.readPacket(nil); err == nil || !strings.Contains(err.Error(), "too large") {
 		t.Fatalf("readPacket: %v, want too-large error", err)
 	}
 }
 
 func TestPacketShortStream(t *testing.T) {
-	var buf bytes.Buffer
-	pc := newPacketConn(struct {
-		io.Reader
-		io.Writer
-	}{&buf, &buf})
+	pc := newConn(bufConn{new(bytes.Buffer)})
 	err := pc.writePacketStream(nil, 10, strings.NewReader("short"))
 	if err == nil || !strings.Contains(err.Error(), "short") {
 		t.Fatalf("writePacketStream: %v, want short-stream error", err)
+	}
+}
+
+func TestPacketLongStream(t *testing.T) {
+	pc := newConn(bufConn{new(bytes.Buffer)})
+	err := pc.writePacketStream(nil, 4, strings.NewReader("toolong"))
+	if err == nil || !strings.Contains(err.Error(), "longer") {
+		t.Fatalf("writePacketStream: %v, want too-long error", err)
 	}
 }

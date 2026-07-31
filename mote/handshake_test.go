@@ -6,6 +6,7 @@ package main
 
 import (
 	"io"
+	"os"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -13,15 +14,22 @@ import (
 )
 
 // A scriptReader replays a scripted sequence of delays and data chunks,
-// then returns EOF (or hangs forever if the last step has no data).
+// then returns EOF. It implements SetReadDeadline so that the
+// handshake stall timeout can be tested with synctest's fake clock.
 type scriptStep struct {
 	delay time.Duration
 	data  string
 }
 
 type scriptReader struct {
-	steps []scriptStep
-	cur   string
+	steps    []scriptStep
+	cur      string
+	deadline time.Time
+}
+
+func (r *scriptReader) SetReadDeadline(t time.Time) error {
+	r.deadline = t
+	return nil
 }
 
 func (r *scriptReader) Read(p []byte) (int, error) {
@@ -30,6 +38,10 @@ func (r *scriptReader) Read(p []byte) (int, error) {
 			return 0, io.EOF
 		}
 		step := r.steps[0]
+		if !r.deadline.IsZero() && time.Now().Add(step.delay).After(r.deadline) {
+			time.Sleep(time.Until(r.deadline))
+			return 0, os.ErrDeadlineExceeded
+		}
 		r.steps = r.steps[1:]
 		time.Sleep(step.delay)
 		r.cur = step.data
@@ -57,10 +69,6 @@ func TestScanServerHello(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				err := scanServerHello(&scriptReader{steps: tt.steps})
-				// Let any remaining scripted delays elapse so the reader
-				// goroutine inside scanServerHello can exit before the
-				// bubble closes. (In real use the process exits instead.)
-				defer time.Sleep(time.Hour)
 				if tt.err == "" {
 					if err != nil {
 						t.Fatalf("scanServerHello: %v, want success", err)

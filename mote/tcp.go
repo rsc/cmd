@@ -20,6 +20,9 @@ func tcpPassword(u *url.URL) (string, error) {
 	if password == "" || strings.Contains(password, "/") {
 		return "", fmt.Errorf("tcp server URL must have the form tcp://host:port/password")
 	}
+	if password == "password" {
+		return "", fmt.Errorf("choose a password other than %q", "password")
+	}
 	return password, nil
 }
 

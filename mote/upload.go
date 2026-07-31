@@ -58,7 +58,7 @@ func uploadList(cmdName string, extra []string, testdata bool) ([]*File, error) 
 // isFileCmd reports whether the command name refers to a file
 // to be uploaded, as opposed to a command found on the remote PATH.
 func isFileCmd(name string) bool {
-	return strings.ContainsRune(name, '/') || strings.ContainsRune(name, filepath.Separator)
+	return strings.Contains(name, "/") || strings.Contains(name, string(filepath.Separator))
 }
 
 // addTree adds the file or directory tree rooted at name to files.

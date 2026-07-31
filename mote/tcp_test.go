@@ -5,7 +5,6 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"net"
 	"net/url"
@@ -34,26 +33,16 @@ func TestTCPTransport(t *testing.T) {
 	}()
 
 	rawURL := fmt.Sprintf("tcp://%s/s3cret", ln.Addr())
-	rwc, password, err := dialServer(rawURL)
+	conn, err := dialServer(rawURL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rwc.Close()
-	if password != "s3cret" {
-		t.Fatalf("password = %q", password)
-	}
-	var outb, errb bytes.Buffer
-	exit, _, _, _, err := runSession(rwc, password, nil, "/mote-test", []string{"echo", "over tcp"}, &outb, &errb)
-	if err != nil {
-		t.Fatalf("runSession: %v", err)
-	}
-	if exit != 0 || outb.String() != "over tcp\n" {
-		t.Errorf("exit=%d stdout=%q, want 0, %q", exit, outb.String(), "over tcp\n")
-	}
+	defer conn.Close()
+	runConn(t, conn, []string{"echo", "over tcp"}, "over tcp\n")
 }
 
 func TestTCPPassword(t *testing.T) {
-	for _, bad := range []string{"tcp://h:1", "tcp://h:1/", "tcp://h:1/a/b"} {
+	for _, bad := range []string{"tcp://h:1", "tcp://h:1/", "tcp://h:1/a/b", "tcp://h:1/password"} {
 		u, err := url.Parse(bad)
 		if err != nil {
 			t.Fatal(err)

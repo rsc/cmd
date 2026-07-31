@@ -75,7 +75,8 @@ func TestRemotePath(t *testing.T) {
 	}{
 		{"/home/gopher/x", "home/gopher/x", false},
 		{"C:/Users/gopher/x", "Users/gopher/x", false},
-		{"/a/../../etc/passwd", "etc/passwd", false}, // cleaned, cannot escape
+		{"/a/../../etc/passwd", "", true}, // .. rejected
+		{"../x", "", true},                // .. rejected
 		{`/a\b`, "", true},
 	}
 	for _, tt := range tests {

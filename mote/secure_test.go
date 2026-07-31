@@ -18,7 +18,7 @@ func TestSecureRoundTrip(t *testing.T) {
 	defer cconn.Close()
 	defer sconn.Close()
 	type result struct {
-		rw  io.ReadWriter
+		rw  io.ReadWriteCloser
 		err error
 	}
 	ch := make(chan result, 1)

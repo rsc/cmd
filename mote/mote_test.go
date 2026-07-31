@@ -39,7 +39,7 @@ func setupDirs(t *testing.T) {
 }
 
 // runPipe runs a full client/server session over an in-memory pipe.
-func runPipe(t *testing.T, password string, files []*File, dir string, args []string) (exit int, status, stdout, stderr string) {
+func runPipe(t *testing.T, password string, files []*File, dir string, args []string) (code int, status, stdout, stderr string) {
 	t.Helper()
 	cconn, sconn := net.Pipe()
 	defer cconn.Close()
@@ -48,42 +48,46 @@ func runPipe(t *testing.T, password string, files []*File, dir string, args []st
 		done <- serve(sconn, password)
 		sconn.Close()
 	}()
-	var outb, errb bytes.Buffer
-	exit, status, goos, goarch, err := runSession(cconn, password, files, dir, args, &outb, &errb)
+	conn, err := clientConn(cconn, password)
 	if err != nil {
-		t.Fatalf("runSession: %v", err)
+		t.Fatalf("clientConn: %v", err)
+	}
+	var outb, errb bytes.Buffer
+	w, err := conn.Run(&Exec{Args: args, Dir: dir, Files: files, Stdout: &outb, Stderr: &errb})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
 	}
 	cconn.Close()
 	if err := <-done; err != nil {
 		t.Fatalf("serve: %v", err)
 	}
-	if goos != runtime.GOOS || goarch != runtime.GOARCH {
-		t.Errorf("session reported GOOS-GOARCH %s-%s, want %s-%s", goos, goarch, runtime.GOOS, runtime.GOARCH)
+	if conn.GOOS != runtime.GOOS || conn.GOARCH != runtime.GOARCH {
+		t.Errorf("session reported GOOS-GOARCH %s-%s, want %s-%s", conn.GOOS, conn.GOARCH, runtime.GOOS, runtime.GOARCH)
 	}
-	return exit, status, outb.String(), errb.String()
+	return w.Code, w.Status, outb.String(), errb.String()
 }
 
 func TestRunEcho(t *testing.T) {
 	setupDirs(t)
-	exit, _, stdout, stderr := runPipe(t, "", nil, "/mote-test", []string{"echo", "hello", "world"})
-	if exit != 0 || stdout != "hello world\n" || stderr != "" {
-		t.Errorf("echo: exit=%d stdout=%q stderr=%q, want 0, %q, %q", exit, stdout, stderr, "hello world\n", "")
+	code, _, stdout, stderr := runPipe(t, "", nil, "/mote-test", []string{"echo", "hello", "world"})
+	if code != 0 || stdout != "hello world\n" || stderr != "" {
+		t.Errorf("echo: code=%d stdout=%q stderr=%q, want 0, %q, %q", code, stdout, stderr, "hello world\n", "")
 	}
 }
 
 func TestExitCode(t *testing.T) {
 	setupDirs(t)
-	exit, _, _, _ := runPipe(t, "", nil, "/mote-test", []string{"sh", "-c", "exit 3"})
-	if exit != 3 {
-		t.Errorf("exit=%d, want 3", exit)
+	code, _, _, _ := runPipe(t, "", nil, "/mote-test", []string{"sh", "-c", "exit 3"})
+	if code != 3 {
+		t.Errorf("code=%d, want 3", code)
 	}
 }
 
 func TestStderr(t *testing.T) {
 	setupDirs(t)
-	exit, _, stdout, stderr := runPipe(t, "", nil, "/mote-test", []string{"sh", "-c", "echo out; echo err >&2"})
-	if exit != 0 || stdout != "out\n" || stderr != "err\n" {
-		t.Errorf("exit=%d stdout=%q stderr=%q, want 0, %q, %q", exit, stdout, stderr, "out\n", "err\n")
+	code, _, stdout, stderr := runPipe(t, "", nil, "/mote-test", []string{"sh", "-c", "echo out; echo err >&2"})
+	if code != 0 || stdout != "out\n" || stderr != "err\n" {
+		t.Errorf("code=%d stdout=%q stderr=%q, want 0, %q, %q", code, stdout, stderr, "out\n", "err\n")
 	}
 }
 
@@ -99,18 +103,18 @@ func TestUploadRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	slashDir := filepath.ToSlash(dir)
-	exit, _, stdout, _ := runPipe(t, "", files, slashDir, []string{"./x.sh"})
+	code, _, stdout, _ := runPipe(t, "", files, slashDir, []string{"./x.sh"})
 	want := "fromscript " + filepath.Base(dir) + "\n"
-	if exit != 0 || stdout != want {
-		t.Errorf("exit=%d stdout=%q, want 0, %q", exit, stdout, want)
+	if code != 0 || stdout != want {
+		t.Errorf("code=%d stdout=%q, want 0, %q", code, stdout, want)
 	}
 	// Second run should find the file already cached (and still work).
 	if !inCache(files[0].Hash, files[0].Size) {
 		t.Errorf("file not in cache after run")
 	}
-	exit, _, stdout, _ = runPipe(t, "", files, slashDir, []string{"./x.sh"})
-	if exit != 0 || stdout != want {
-		t.Errorf("cached run: exit=%d stdout=%q, want 0, %q", exit, stdout, want)
+	code, _, stdout, _ = runPipe(t, "", files, slashDir, []string{"./x.sh"})
+	if code != 0 || stdout != want {
+		t.Errorf("cached run: code=%d stdout=%q, want 0, %q", code, stdout, want)
 	}
 }
 
@@ -127,16 +131,38 @@ func TestRelativeUpload(t *testing.T) {
 	if err := addFile(&files, script); err != nil {
 		t.Fatal(err)
 	}
-	exit, _, stdout, _ := runPipe(t, "", files, filepath.ToSlash(filepath.Join(dir, "myprog")), []string{"../testprog"})
-	if exit != 0 || stdout != "sibling\n" {
-		t.Errorf("exit=%d stdout=%q, want 0, %q", exit, stdout, "sibling\n")
+	code, _, stdout, _ := runPipe(t, "", files, filepath.ToSlash(filepath.Join(dir, "myprog")), []string{"../testprog"})
+	if code != 0 || stdout != "sibling\n" {
+		t.Errorf("code=%d stdout=%q, want 0, %q", code, stdout, "sibling\n")
 	}
 }
 
-// startServeClient starts a server on one end of a pipe and
-// handshakes a raw packet connection on the other, for tests that
+func TestCleanCache(t *testing.T) {
+	setupDirs(t)
+	stale, fresh := cacheFile(strings.Repeat("aa", 32)), cacheFile(strings.Repeat("bb", 32))
+	for _, file := range []string{stale, fresh} {
+		if err := os.MkdirAll(filepath.Dir(file), 0o777); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(file, []byte("x"), 0o666); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Now().Add(-cacheMaxAge - time.Hour)
+	os.Chtimes(stale, old, old)
+	cleanCache()
+	if _, err := os.Stat(stale); err == nil {
+		t.Errorf("stale cache file survived cleanCache")
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Errorf("fresh cache file deleted by cleanCache: %v", err)
+	}
+}
+
+// startServeClient starts a server on one end of a pipe and completes
+// the handshake and Info exchange on the other, for tests that
 // drive the protocol directly.
-func startServeClient(t *testing.T, password string) *packetConn {
+func startServeClient(t *testing.T, password string) *Conn {
 	t.Helper()
 	cconn, sconn := net.Pipe()
 	go func() {
@@ -144,28 +170,32 @@ func startServeClient(t *testing.T, password string) *packetConn {
 		sconn.Close()
 	}()
 	t.Cleanup(func() { cconn.Close() })
-	if err := clientHandshake(cconn); err != nil {
+	conn, err := clientConn(cconn, password)
+	if err != nil {
 		t.Fatal(err)
 	}
-	return newPacketConn(cconn)
+	return conn
 }
 
 func TestKill(t *testing.T) {
 	setupDirs(t)
-	pc := startServeClient(t, "")
-	err := pc.writePacket(&Request{Type: "Run", Cmd: "sleep", Args: []string{"sleep", "300"}, Dir: "/mote-test"}, nil)
+	conn := startServeClient(t, "")
+	err := conn.writePacket(&Request{Type: "Setup", Args: []string{"sleep", "300"}, Dir: "/mote-test"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var resp Response
-	if _, err := pc.readPacket(&resp); err != nil || resp.Type != "Start" {
-		t.Fatalf("got %+v, %v; want Start", resp, err)
+	if _, err := conn.readPacket(&resp); err != nil || resp.Type != "Ready" {
+		t.Fatalf("got %+v, %v; want Ready", resp, err)
 	}
-	start := time.Now()
-	if err := pc.writePacket(&Request{Type: "Kill"}, nil); err != nil {
+	if err := conn.writePacket(&Request{Type: "Start"}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pc.readPacket(&resp); err != nil || resp.Type != "Exit" {
+	start := time.Now()
+	if err := conn.writePacket(&Request{Type: "Kill"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.readPacket(&resp); err != nil || resp.Type != "Exit" {
 		t.Fatalf("got %+v, %v; want Exit", resp, err)
 	}
 	if resp.ExitCode >= 0 {
@@ -178,26 +208,25 @@ func TestKill(t *testing.T) {
 
 func TestBadUploadHash(t *testing.T) {
 	setupDirs(t)
-	pc := startServeClient(t, "")
+	conn := startServeClient(t, "")
 	badHash := strings.Repeat("ab", 32)
 	req := &Request{
-		Type:  "Run",
-		Cmd:   "./x",
+		Type:  "Setup",
 		Args:  []string{"./x"},
 		Dir:   "/mote-test",
 		Files: []*File{{Path: "/mote-test/x", Hash: badHash, Size: 5}},
 	}
-	if err := pc.writePacket(req, nil); err != nil {
+	if err := conn.writePacket(req, nil); err != nil {
 		t.Fatal(err)
 	}
 	var resp Response
-	if _, err := pc.readPacket(&resp); err != nil || resp.Type != "Need" {
+	if _, err := conn.readPacket(&resp); err != nil || resp.Type != "Need" {
 		t.Fatalf("got %+v, %v; want Need", resp, err)
 	}
-	if err := pc.writePacket(&Request{Type: "Upload"}, []byte("hello")); err != nil {
+	if err := conn.writePacket(&Request{Type: "Upload"}, []byte("hello")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pc.readPacket(&resp); err != nil {
+	if _, err := conn.readPacket(&resp); err != nil {
 		t.Fatal(err)
 	}
 	if resp.Type != "Exit" || !strings.Contains(resp.Error, "hash") {
@@ -210,13 +239,19 @@ func TestBadUploadHash(t *testing.T) {
 
 func TestServerError(t *testing.T) {
 	setupDirs(t)
-	pc := startServeClient(t, "")
-	err := pc.writePacket(&Request{Type: "Run", Cmd: "/nonexistent/command/xyzzy", Args: []string{"/nonexistent/command/xyzzy"}, Dir: "/mote-test"}, nil)
+	conn := startServeClient(t, "")
+	err := conn.writePacket(&Request{Type: "Setup", Args: []string{"/nonexistent/command/xyzzy"}, Dir: "/mote-test"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var resp Response
-	if _, err := pc.readPacket(&resp); err != nil {
+	if _, err := conn.readPacket(&resp); err != nil || resp.Type != "Ready" {
+		t.Fatalf("got %+v, %v; want Ready", resp, err)
+	}
+	if err := conn.writePacket(&Request{Type: "Start"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.readPacket(&resp); err != nil {
 		t.Fatal(err)
 	}
 	if resp.Type != "Exit" || resp.Error == "" {
@@ -239,6 +274,20 @@ func TestVersionAndAliasDispatch(t *testing.T) {
 	aliases, err := readAliases()
 	if err != nil || len(aliases) != 2 {
 		t.Fatalf("readAliases = %v, %v", aliases, err)
+	}
+}
+
+// runConn runs a command over an established connection and checks
+// its output, for the transport tests.
+func runConn(t *testing.T, conn *Conn, args []string, want string) {
+	t.Helper()
+	var outb, errb bytes.Buffer
+	w, err := conn.Run(&Exec{Args: args, Dir: "/mote-test", Stdout: &outb, Stderr: &errb})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if w.Code != 0 || outb.String() != want {
+		t.Errorf("code=%d stdout=%q, want 0, %q", w.Code, outb.String(), want)
 	}
 }
 
@@ -280,39 +329,67 @@ func sshMockMain() {
 func TestSSHTransport(t *testing.T) {
 	setupDirs(t)
 	mockPATH(t, "ssh")
-	rwc, password, err := dialServer("ssh://kremvax")
+	conn, err := dialServer("ssh://kremvax")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rwc.Close()
-	var outb, errb bytes.Buffer
-	exit, _, _, _, err := runSession(rwc, password, nil, "/mote-test", []string{"echo", "over ssh"}, &outb, &errb)
-	if err != nil {
-		t.Fatalf("runSession: %v", err)
-	}
-	if exit != 0 || outb.String() != "over ssh\n" {
-		t.Errorf("exit=%d stdout=%q, want 0, %q", exit, outb.String(), "over ssh\n")
-	}
+	defer conn.Close()
+	runConn(t, conn, []string{"echo", "over ssh"}, "over ssh\n")
 }
 
+// The gomote mock takes direction from the test environment:
+// $MOTE_TEST_GOMOTE_INST is the instance name to expect (and print
+// from create), $MOTE_TEST_GOMOTE_LIST is the "gomote list" output,
+// and $MOTE_TEST_GOMOTE_GROUPS, if set, means the mote group exists.
 func gomoteMockMain() {
 	log.SetPrefix("gomote mock: ")
 	log.SetFlags(0)
 	if len(os.Args) < 2 {
 		log.Fatal("no subcommand")
 	}
+	inst := os.Getenv("MOTE_TEST_GOMOTE_INST")
+	if inst == "" {
+		inst = "user-gotip-linux-amd64-0"
+	}
 	switch os.Args[1] {
 	case "list":
-		// No instances.
+		fmt.Print(os.Getenv("MOTE_TEST_GOMOTE_LIST"))
 		os.Exit(0)
-	case "create":
-		if os.Args[2] != "gotip-linux-amd64" {
-			log.Fatalf("create %s", os.Args[2])
+	case "group":
+		if len(os.Args) == 3 && os.Args[2] == "list" {
+			fmt.Printf("Name\tInstances\t\n")
+			if os.Getenv("MOTE_TEST_GOMOTE_GROUPS") != "" {
+				fmt.Printf("mote\t(none)\t\n")
+			}
+			os.Exit(0)
 		}
-		fmt.Printf("user-gotip-linux-amd64-0\n")
+	case "create":
+		if len(os.Args) == 3 && os.Args[2] == "-list" {
+			fmt.Print("gotip-linux-amd64\n" +
+				"gotip-linux-amd64-longtest\n" +
+				"gotip-linux-amd64-race\n" +
+				"gotip-freebsd-amd64_14.2\n" +
+				"gotip-freebsd-amd64_15.0\n" +
+				"gotip-linux-ppc64_power8\n" +
+				"gotip-linux-ppc64_power9\n" +
+				"gotip-linux-ppc64_power10\n")
+			os.Exit(0)
+		}
+		if os.Getenv("MOTE_TEST_GOMOTE_LIST") != "" {
+			log.Fatalf("create called when reuse expected: %v", os.Args)
+		}
+		if os.Getenv("MOTE_TEST_GOMOTE_GROUPS") != "" {
+			// Group exists: expect plain create with GOMOTE_GROUP set.
+			if os.Getenv("GOMOTE_GROUP") != "mote" || len(os.Args) != 3 || os.Args[2] != "gotip-linux-amd64" {
+				log.Fatalf("bad create args %v with GOMOTE_GROUP=%q", os.Args, os.Getenv("GOMOTE_GROUP"))
+			}
+		} else if len(os.Args) != 4 || os.Args[2] != "-new-group=mote" || os.Args[3] != "gotip-linux-amd64" {
+			log.Fatalf("bad create args: %v", os.Args)
+		}
+		fmt.Printf("%s\n", inst)
 		os.Exit(0)
 	case "put":
-		if len(os.Args) != 4 || os.Args[2] != "user-gotip-linux-amd64-0" {
+		if len(os.Args) != 4 || os.Args[2] != inst {
 			log.Fatalf("bad put args: %v", os.Args)
 		}
 		if _, err := os.Stat(os.Args[3]); err != nil {
@@ -320,8 +397,8 @@ func gomoteMockMain() {
 		}
 		os.Exit(0)
 	case "ssh":
-		want := []string{"ssh", "user-gotip-linux-amd64-0", "./mote", "serve", "-"}
-		if len(os.Args) != 6 || strings.Join(os.Args[1:], " ") != strings.Join(want, " ") {
+		want := []string{"ssh", inst, "./mote", "serve", "-"}
+		if strings.Join(os.Args[1:], " ") != strings.Join(want, " ") {
 			log.Fatalf("bad ssh args: %v", os.Args)
 		}
 		if err := serve(stdioConn{}, ""); err != nil {
@@ -333,7 +410,7 @@ func gomoteMockMain() {
 }
 
 func goMockMain() {
-	// Mock "go build -o bin rsc.io/cmd/mote": create a dummy binary.
+	// Mock "go build -o bin": create a dummy binary.
 	log.SetPrefix("go mock: ")
 	log.SetFlags(0)
 	if len(os.Args) >= 4 && os.Args[1] == "build" && os.Args[2] == "-o" {
@@ -348,19 +425,41 @@ func goMockMain() {
 func TestGomoteTransport(t *testing.T) {
 	setupDirs(t)
 	mockPATH(t, "gomote", "go")
-	rwc, password, err := dialServer("gomote://gotip-linux-amd64")
+	conn, err := dialServer("gomote://gotip-linux-amd64")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rwc.Close()
-	var outb, errb bytes.Buffer
-	exit, _, _, _, err := runSession(rwc, password, nil, "/mote-test", []string{"echo", "over gomote"}, &outb, &errb)
+	defer conn.Close()
+	runConn(t, conn, []string{"echo", "over gomote"}, "over gomote\n")
+}
+
+func TestGomoteTransportExistingGroup(t *testing.T) {
+	setupDirs(t)
+	mockPATH(t, "gomote", "go")
+	t.Setenv("MOTE_TEST_GOMOTE_GROUPS", "mote")
+	conn, err := dialServer("gomote://gotip-linux-amd64")
 	if err != nil {
-		t.Fatalf("runSession: %v", err)
+		t.Fatal(err)
 	}
-	if exit != 0 || outb.String() != "over gomote\n" {
-		t.Errorf("exit=%d stdout=%q, want 0, %q", exit, outb.String(), "over gomote\n")
+	defer conn.Close()
+	runConn(t, conn, []string{"echo", "over gomote"}, "over gomote\n")
+}
+
+func TestGomoteTransportReuse(t *testing.T) {
+	setupDirs(t)
+	mockPATH(t, "gomote", "go")
+	// One matching instance outside the mote group (must not be reused)
+	// and one inside it.
+	t.Setenv("MOTE_TEST_GOMOTE_LIST",
+		"user-gotip-linux-amd64-3\tgotip-linux-amd64\thost-amd64\texpires in 1h\n"+
+			"user-gotip-linux-amd64-7 (mote, other)\tgotip-linux-amd64\thost-amd64\texpires in 1h\n")
+	t.Setenv("MOTE_TEST_GOMOTE_INST", "user-gotip-linux-amd64-7")
+	conn, err := dialServer("gomote://gotip-linux-amd64")
+	if err != nil {
+		t.Fatal(err)
 	}
+	defer conn.Close()
+	runConn(t, conn, []string{"echo", "over gomote"}, "over gomote\n")
 }
 
 func TestResolveServer(t *testing.T) {
@@ -386,5 +485,22 @@ func TestResolveServer(t *testing.T) {
 	}
 	if url, err := resolveServer("", "echo", nil); err != nil || url != "tcp://h:1/pw" {
 		t.Errorf("resolveServer with $GOOS/$GOARCH = %q, %v", url, err)
+	}
+}
+
+func TestResolveServerGomote(t *testing.T) {
+	setupDirs(t)
+	mockPATH(t, "gomote")
+	for _, tt := range []struct{ name, want string }{
+		{"linux-amd64", "gomote://gotip-linux-amd64"},
+		{"freebsd-amd64", "gomote://gotip-freebsd-amd64_15.0"},
+		{"linux-ppc64", "gomote://gotip-linux-ppc64_power10"},
+	} {
+		if url, err := resolveServer(tt.name, "echo", nil); err != nil || url != tt.want {
+			t.Errorf("resolveServer(%s) = %q, %v; want %q", tt.name, url, err, tt.want)
+		}
+	}
+	if _, err := resolveServer("plan9-386", "echo", nil); err == nil {
+		t.Errorf("resolveServer(plan9-386) succeeded, want error")
 	}
 }

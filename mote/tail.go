@@ -82,10 +82,11 @@ func tsnetServer(name string) *tsnet.Server {
 	entries, _ := os.ReadDir(dir)
 	needKey := len(entries) == 0
 	srv := &tsnet.Server{
-		Hostname: "mote-" + name,
-		Dir:      dir,
-		UserLogf: onceLogf(log.Printf), // tsnet repeats the login URL every few seconds
-		Logf:     func(string, ...any) {},
+		Hostname:      "mote-" + name,
+		Dir:           dir,
+		AdvertiseTags: []string{"tag:mote"}, // see the Tailscale section in doc.go
+		UserLogf:      onceLogf(log.Printf), // tsnet repeats the login URL every few seconds
+		Logf:          func(string, ...any) {},
 	}
 	if *verbose {
 		srv.Logf = log.Printf

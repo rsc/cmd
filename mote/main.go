@@ -12,13 +12,17 @@ import (
 	"runtime/debug"
 )
 
+var usageMessage = `Usage: mote [-u path]... [@name] cmd [args...]
+	mote alias [name [URL]]
+	mote clean
+	mote serve URL
+	mote login URL
+	mote go-setup
+	mote version
+`
+
 func usage() {
-	fmt.Fprintf(os.Stderr, "Usage: mote [-u path]... [@name] cmd [args...]\n"+
-		"\tmote alias [name [URL]]\n"+
-		"\tmote serve URL\n"+
-		"\tmote login URL\n"+
-		"\tmote go-setup\n"+
-		"\tmote version\n")
+	fmt.Fprint(os.Stderr, usageMessage)
 	flag.PrintDefaults()
 	os.Exit(2)
 }
@@ -53,6 +57,8 @@ func main() {
 	switch args[0] {
 	case "alias":
 		cmdAlias(args[1:])
+	case "clean":
+		cmdClean(args[1:])
 	case "serve":
 		cmdServe(args[1:])
 	case "login":

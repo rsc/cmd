@@ -5,14 +5,21 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 )
+
+// gomoteGroup is the gomote instance group that mote creates
+// and reuses instances in.
+const gomoteGroup = "mote"
 
 // dialGomote connects to a gomote://builder server (for example
 // gomote://gotip-linux-amd64), creating a gomote instance if needed,
@@ -33,14 +40,27 @@ func dialGomote(u *url.URL) (io.ReadWriteCloser, error) {
 		return nil, err
 	}
 	defer os.RemoveAll(filepath.Dir(bin))
-	put := exec.Command("gomote", "put", inst, bin)
-	put.Stderr = os.Stderr
-	if err := put.Run(); err != nil {
-		return nil, fmt.Errorf("gomote put: %v", err)
+	if _, err := gomoteOutput(exec.Command("gomote", "put", inst, bin)); err != nil {
+		return nil, err
 	}
 	c := exec.Command("gomote", "ssh", inst, "./mote", "serve", "-")
-	c.Stderr = os.Stderr
+	c.Stderr = new(bytes.Buffer) // hidden unless Close reports an error
 	return startProcConn(c)
+}
+
+// gomoteOutput runs the gomote command c, returning its standard output.
+// Standard error is hidden unless the command fails.
+func gomoteOutput(c *exec.Cmd) ([]byte, error) {
+	var stderr bytes.Buffer
+	c.Stderr = &stderr
+	out, err := c.Output()
+	if err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return nil, fmt.Errorf("%s: %v\n%s", strings.Join(c.Args, " "), err, msg)
+		}
+		return nil, fmt.Errorf("%s: %v", strings.Join(c.Args, " "), err)
+	}
+	return out, nil
 }
 
 // builderOSArch extracts the GOOS and GOARCH from a builder name
@@ -53,31 +73,92 @@ func builderOSArch(builder string) (goos, goarch string, err error) {
 	return f[1], f[2], nil
 }
 
-// gomoteInstance returns the name of a gomote instance for the given
-// builder, reusing an existing instance if one is listed and
-// creating one otherwise.
-func gomoteInstance(builder string) (string, error) {
-	out, err := exec.Command("gomote", "list").Output()
+// gomoteBuilder returns the builder type to use for the given GOOS and
+// GOARCH, from the list printed by "gomote create -list": the exact
+// gotip-GOOS-GOARCH if it exists, and otherwise the last (in sorted
+// order) of the gotip-GOOS-GOARCH[-_]* variants, ignoring the longtest,
+// race, power8, and power9 builders.
+func gomoteBuilder(goos, goarch string) (string, error) {
+	out, err := gomoteOutput(exec.Command("gomote", "create", "-list"))
 	if err != nil {
-		return "", fmt.Errorf("gomote list: %v", err)
+		return "", err
 	}
+	want := "gotip-" + goos + "-" + goarch
+	best := ""
 	for line := range strings.Lines(string(out)) {
-		f := strings.Fields(line)
-		if len(f) >= 2 && f[1] == builder {
-			return f[0], nil
+		name := strings.TrimSpace(line)
+		if name == want {
+			return name, nil
+		}
+		if len(name) <= len(want) || !strings.HasPrefix(name, want) || (name[len(want)] != '-' && name[len(want)] != '_') {
+			continue
+		}
+		if strings.Contains(name, "-longtest") || strings.Contains(name, "-race") ||
+			strings.Contains(name, "_power8") || strings.Contains(name, "_power9") {
+			continue
+		}
+		best = max(best, name)
+	}
+	if best == "" {
+		return "", fmt.Errorf("no gomote builder for %s-%s", goos, goarch)
+	}
+	return best, nil
+}
+
+// gomoteInstance returns the name of a gomote instance for the given
+// builder, reusing an instance from the mote group if one is listed
+// and creating one in the mote group otherwise.
+func gomoteInstance(builder string) (string, error) {
+	out, err := gomoteOutput(exec.Command("gomote", "list"))
+	if err != nil {
+		return "", err
+	}
+	// Lines look like "name (group1, group2)\tbuilderType\thostType\texpires ...".
+	for line := range strings.Lines(string(out)) {
+		f := strings.Split(strings.TrimSuffix(line, "\n"), "\t")
+		if len(f) < 2 || f[1] != builder {
+			continue
+		}
+		name, groups, ok := strings.Cut(f[0], " (")
+		if !ok {
+			continue
+		}
+		if slices.Contains(strings.Split(strings.TrimSuffix(groups, ")"), ", "), gomoteGroup) {
+			return name, nil
 		}
 	}
-	create := exec.Command("gomote", "create", builder)
-	create.Stderr = os.Stderr
-	out, err = create.Output()
+
+	// Create an instance in the mote group.
+	// The -new-group flag creates the group but fails if it exists;
+	// for an existing group, $GOMOTE_GROUP names the group to add to.
+	create := exec.Command("gomote", "create", "-new-group="+gomoteGroup, builder)
+	if gomoteGroupExists() {
+		create = exec.Command("gomote", "create", builder)
+		create.Env = append(os.Environ(), "GOMOTE_GROUP="+gomoteGroup)
+	}
+	out, err = gomoteOutput(create)
 	if err != nil {
-		return "", fmt.Errorf("gomote create %s: %v", builder, err)
+		return "", err
 	}
 	inst := strings.TrimSpace(string(out))
 	if inst == "" {
 		return "", fmt.Errorf("gomote create %s: no instance name in output", builder)
 	}
 	return inst, nil
+}
+
+// gomoteGroupExists reports whether the mote instance group exists.
+func gomoteGroupExists() bool {
+	out, err := gomoteOutput(exec.Command("gomote", "group", "list"))
+	if err != nil {
+		return false
+	}
+	for line := range strings.Lines(string(out)) {
+		if name, _, _ := strings.Cut(line, "\t"); name == gomoteGroup {
+			return true
+		}
+	}
+	return false
 }
 
 // buildMote cross-compiles a mote binary for the given GOOS and GOARCH,
@@ -89,10 +170,24 @@ func buildMote(goos, goarch string) (string, error) {
 	}
 	bin := filepath.Join(dir, "mote")
 	c := exec.Command("go", "build", "-o", bin, "rsc.io/cmd/mote")
+	// If this program's source directory exists on this machine,
+	// build there instead, to pick up any local changes being tested.
+	if _, file, _, ok := runtime.Caller(0); ok {
+		if src := filepath.Dir(file); src != "" {
+			if _, err := os.Stat(filepath.Join(src, "gomote.go")); err == nil {
+				c = exec.Command("go", "build", "-o", bin)
+				c.Dir = src
+			}
+		}
+	}
 	c.Env = append(os.Environ(), "GOOS="+goos, "GOARCH="+goarch, "CGO_ENABLED=0")
-	c.Stderr = os.Stderr
+	var stderr bytes.Buffer
+	c.Stderr = &stderr
 	if err := c.Run(); err != nil {
 		os.RemoveAll(dir)
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return "", fmt.Errorf("cross-compiling mote for %s-%s: %v\n%s", goos, goarch, err, msg)
+		}
 		return "", fmt.Errorf("cross-compiling mote for %s-%s: %v", goos, goarch, err)
 	}
 	return bin, nil
