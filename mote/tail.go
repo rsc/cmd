@@ -10,11 +10,15 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"strings"
 	"sync"
+	"time"
 
+	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tsnet"
 )
 
@@ -129,6 +133,75 @@ func onceLogf(f func(string, ...any)) func(string, ...any) {
 			f("%s", msg)
 		}
 	}
+}
+
+// A tsNet is the tailNet for a real tsnet node.
+//
+// Its Dial resolves host names strictly from the tailnet's own state
+// and connects to the resulting Tailscale IP. It must never fall back
+// to regular DNS: tail:// trusts the tailnet to authenticate both
+// ends of the connection, so a mote session must not be able to fall
+// through to some arbitrary internet host. (tsnet's own Dial consults
+// the system resolver when the tailnet does not know the name.)
+type tsNet struct {
+	srv *tsnet.Server
+}
+
+func (t *tsNet) Dial(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	ip, err := t.lookup(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	return t.srv.Dial(ctx, network, net.JoinHostPort(ip.String(), port))
+}
+
+// lookup resolves host on the tailnet, waiting until the context's
+// deadline for the host to appear: a node that has just come up may
+// not have received its list of peers yet.
+func (t *tsNet) lookup(ctx context.Context, host string) (netip.Addr, error) {
+	lc, err := t.srv.LocalClient()
+	if err != nil {
+		return netip.Addr{}, fmt.Errorf("tailscale: %v", err)
+	}
+	for {
+		st, err := lc.Status(ctx)
+		if err != nil {
+			return netip.Addr{}, fmt.Errorf("tailscale status: %v", err)
+		}
+		if ip, ok := tailPeerAddr(st, host); ok {
+			return ip, nil
+		}
+		select {
+		case <-ctx.Done():
+			return netip.Addr{}, fmt.Errorf("no host %s on the tailnet", host)
+		case <-time.After(1 * time.Second):
+		}
+	}
+}
+
+// tailPeerAddr returns the Tailscale IP of the tailnet peer named
+// host in st. It checks both the peer's MagicDNS name (which changes
+// to name-1, name-2, ... when names collide) and its machine name.
+func tailPeerAddr(st *ipnstate.Status, host string) (netip.Addr, bool) {
+	for _, peer := range st.Peer {
+		name, _, _ := strings.Cut(peer.DNSName, ".")
+		if (strings.EqualFold(name, host) || strings.EqualFold(peer.HostName, host)) && len(peer.TailscaleIPs) > 0 {
+			return peer.TailscaleIPs[0], true
+		}
+	}
+	return netip.Addr{}, false
+}
+
+func (t *tsNet) Listen(network, addr string) (net.Listener, error) {
+	return t.srv.Listen(network, addr)
+}
+
+func (t *tsNet) Close() error {
+	return t.srv.Close()
 }
 
 // dialTail connects to a tail://name server over Tailscale,

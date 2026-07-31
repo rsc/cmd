@@ -76,8 +76,8 @@ func haveTailCredentials(name string) bool {
 	return err == nil && info.Size() > 0
 }
 
-// A tailNet is the network a daemon serves: the tailnet in ordinary use,
-// or a stand-in during testing. *tsnet.Server implements tailNet.
+// A tailNet is the network a daemon serves: the tailnet in ordinary use
+// (a tsNet, wrapping a tsnet.Server), or a stand-in during testing.
 type tailNet interface {
 	Dial(ctx context.Context, network, addr string) (net.Conn, error)
 	Listen(network, addr string) (net.Listener, error)
@@ -202,6 +202,33 @@ func daemonDial(name, addr string) (io.ReadWriteCloser, error) {
 	}
 }
 
+// daemonStop shuts down the daemon for the named local node,
+// if one is running. It does not start a daemon to stop it.
+func daemonStop(name string) error {
+	conn, err := net.Dial("unix", servicePath(name))
+	if err != nil {
+		log.Printf("tailscale daemon for mote-%s not running", name)
+		return nil
+	}
+	defer conn.Close()
+	c := newConn(conn)
+	if err := c.writePacket(&Request{Type: "Stop"}, nil); err != nil {
+		return fmt.Errorf("stopping Tailscale daemon: %v", err)
+	}
+	var resp Response
+	if _, err := c.readPacket(&resp); err != nil {
+		return fmt.Errorf("stopping Tailscale daemon: %v", err)
+	}
+	if resp.Error != "" {
+		return errors.New(resp.Error)
+	}
+	if resp.Type != "Stopping" {
+		return fmt.Errorf("unexpected response type %q", resp.Type)
+	}
+	log.Printf("stopped tailscale daemon for mote-%s", name)
+	return nil
+}
+
 // daemonServe asks the daemon for the named local node to serve the
 // tailnet, and prints the daemon's log output until the connection ends.
 // Hanging up tells the daemon to stop serving.
@@ -297,7 +324,7 @@ func runDaemon(name string, tn tailNet) error {
 			srv.Close()
 			return fmt.Errorf("tailscale: %v", err)
 		}
-		tn = srv
+		tn = &tsNet{srv: srv}
 	}
 	defer tn.Close()
 
@@ -410,6 +437,11 @@ func (d *daemon) client(conn net.Conn) {
 		d.dial(c, conn, &req)
 	case "Serve":
 		d.serve(c, conn, &req)
+	case "Stop":
+		log.Printf("stopped by mote close")
+		c.writePacket(&Response{Type: "Stopping"}, nil)
+		conn.Close()
+		d.stop()
 	}
 }
 

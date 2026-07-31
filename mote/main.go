@@ -15,9 +15,10 @@ import (
 var usageMessage = `Usage: mote [-u path]... [@name] cmd [args...]
 	mote alias [name [URL]]
 	mote clean
-	mote serve URL
-	mote login URL
+	mote close [URL]
 	mote go-setup
+	mote login URL
+	mote serve URL
 	mote version
 `
 
@@ -59,6 +60,8 @@ func main() {
 		cmdAlias(args[1:])
 	case "clean":
 		cmdClean(args[1:])
+	case "close":
+		cmdClose(args[1:])
 	case "serve":
 		cmdServe(args[1:])
 	case "login":

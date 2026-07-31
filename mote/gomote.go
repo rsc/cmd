@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"log"
 	"net/url"
 	"os"
 	"os/exec"
@@ -125,18 +126,18 @@ func gomoteBuilder(goos, goarch string) (string, error) {
 	return best, nil
 }
 
-// gomoteInstance returns the name of a gomote instance for the given
-// builder, reusing an instance from the mote group if one is listed
-// and creating one in the mote group otherwise.
-func gomoteInstance(builder string) (string, error) {
+// gomoteInstances returns the gomote instances in the mote group
+// that have the given builder type ("" for all of them).
+func gomoteInstances(builder string) ([]string, error) {
 	out, err := gomoteOutput(exec.Command("gomote", "list"))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	// Lines look like "name (group1, group2)\tbuilderType\thostType\texpires ...".
+	var insts []string
 	for line := range strings.Lines(string(out)) {
 		f := strings.Split(strings.TrimSuffix(line, "\n"), "\t")
-		if len(f) < 2 || f[1] != builder {
+		if len(f) < 2 || (builder != "" && f[1] != builder) {
 			continue
 		}
 		name, groups, ok := strings.Cut(f[0], " (")
@@ -144,8 +145,46 @@ func gomoteInstance(builder string) (string, error) {
 			continue
 		}
 		if slices.Contains(strings.Split(strings.TrimSuffix(groups, ")"), ", "), gomoteGroup) {
-			return name, nil
+			insts = append(insts, name)
 		}
+	}
+	return insts, nil
+}
+
+// closeGomote destroys the gomote instances backing gomote://builder.
+func closeGomote(u *url.URL) error {
+	insts, err := gomoteInstances(u.Host)
+	if err != nil {
+		return err
+	}
+	if len(insts) == 0 {
+		log.Printf("no gomote instance for %s", u.Host)
+		return nil
+	}
+	return destroyGomotes(insts)
+}
+
+// destroyGomotes destroys the given gomote instances.
+func destroyGomotes(insts []string) error {
+	for _, inst := range insts {
+		if _, err := gomoteOutput(exec.Command("gomote", "destroy", inst)); err != nil {
+			return err
+		}
+		log.Printf("destroyed gomote %s", inst)
+	}
+	return nil
+}
+
+// gomoteInstance returns the name of a gomote instance for the given
+// builder, reusing an instance from the mote group if one is listed
+// and creating one in the mote group otherwise.
+func gomoteInstance(builder string) (string, error) {
+	insts, err := gomoteInstances(builder)
+	if err != nil {
+		return "", err
+	}
+	if len(insts) > 0 {
+		return insts[0], nil
 	}
 
 	// Create an instance in the mote group.
@@ -156,7 +195,7 @@ func gomoteInstance(builder string) (string, error) {
 		create = exec.Command("gomote", "create", builder)
 		create.Env = append(os.Environ(), "GOMOTE_GROUP="+gomoteGroup)
 	}
-	out, err = gomoteOutput(create)
+	out, err := gomoteOutput(create)
 	if err != nil {
 		return "", err
 	}

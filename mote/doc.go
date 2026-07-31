@@ -9,9 +9,10 @@ Usage:
 	mote [-u path]... [@name] cmd [args...]
 	mote alias [name [URL]]
 	mote clean
-	mote serve URL
-	mote login URL
+	mote close [URL]
 	mote go-setup
+	mote login URL
+	mote serve URL
 	mote version
 
 # Running Programs
@@ -180,18 +181,13 @@ Mote will prompt for a Tailscale auth key and then use that
 auth key to register and obtain credentials.
 It caches those credentials for reuse in future runs.
 
-Mote registers with the tag “tag:mote”, so before creating an auth key,
-define tag:mote in the tailnet policy file's “tagOwners” section.
+To create an auth key, open the “Keys” page of the Tailscale admin console
+(https://login.tailscale.com/admin/settings/keys) and click “Generate auth key”.
+Mote registers with the tag “tag:mote”, so before generating the key,
+define tag:mote in the tailnet policy file's “tagOwners” section,
+and then select tag:mote on the key generation form.
 Tagged nodes have no expiring human identity attached,
 and the tag makes it easy to write policy rules for mote servers.
-
-To create the auth key, visit
-https://console.tailscale.com/admin/machines/new-linux and then:
-
- 1. Add tag:mote to Tags.
- 2. Mark the authentication key reusable (optional, for multiple nodes).
- 3. Click “Generate install script”, and then copy the --auth-key= argument
-    to paste into the mote prompt.
 
 The server registers on the tailnet as mote-servername
 and the client registers as mote-clientname,
@@ -258,6 +254,38 @@ backed by gomotes the first time they are needed. For example:
 	% mote go-setup
 	% GOOS=freebsd GOARCH=amd64 go test strings
 	PASS
+	%
+
+# Closing Servers
+
+Each transport leaves something running so that the next mote command
+is fast: ssh keeps a shared connection open for 30 minutes, Tailscale
+keeps the local node's daemon running for 30 minutes after its last
+use, and a gomote instance lives until its lease expires. All of these
+go away on their own, but “mote close URL” shuts them down early:
+
+	% mote close ssh://kremvax
+	% mote close tail:
+	% mote close gomote://gotip-linux-amd64
+	mote: destroyed gomote user-gotip-linux-amd64-0
+	%
+
+For ssh, close stops the shared connection to the named host. For
+Tailscale, close stops the local daemon named by the URL, like login
+and serve (tail: means the usual single login); connections to any
+number of servers ran through that one daemon. For gomotes, close
+destroys the mote-created instances with the named builder type.
+An alias works in place of the URL, as does a $GOOS-$GOARCH pair
+backed by a gomote.
+
+Running “mote close” with no URL closes everything: every shared ssh
+connection, every local Tailscale daemon, and every gomote instance
+that mote created.
+
+	% mote close
+	mote: closed shared ssh connection to kremvax
+	mote: stopped tailscale daemon for mote-mac
+	mote: destroyed gomote user-gotip-linux-amd64-0
 	%
 
 # Configuration

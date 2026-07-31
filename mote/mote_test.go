@@ -314,6 +314,22 @@ func sshMockMain() {
 	log.SetPrefix("ssh mock: ")
 	log.SetFlags(0)
 	args := strings.Join(os.Args[1:], " ")
+	if strings.Contains(args, "-O exit") {
+		// mote close: stop the shared connection. The ControlPath is
+		// the %-template for a URL close and a literal socket path for
+		// a close-everything sweep; both name kremvax.
+		for _, want := range []string{"ControlPath ", "kremvax"} {
+			if !strings.Contains(args, want) {
+				log.Fatalf("missing %q in close args: %s", want, args)
+			}
+		}
+		if os.Getenv("MOTE_TEST_SSH_NOMASTER") != "" {
+			fmt.Fprintf(os.Stderr, "Control socket connect(/home/user/.ssh/sockets/mote-user@kremvax-22): No such file or directory\n")
+			os.Exit(255)
+		}
+		fmt.Fprintf(os.Stderr, "Exit request sent.\n")
+		os.Exit(0)
+	}
 	for _, want := range []string{"ControlMaster auto", "ControlPersist 1800", "ControlPath ~/.ssh/sockets/mote-%r@%h-%p", "kremvax mote serve -"} {
 		if !strings.Contains(args, want) {
 			log.Fatalf("missing %q in args: %s", want, args)
@@ -438,6 +454,11 @@ func gomoteMockMain() {
 		}
 		fmt.Printf("%s\n", inst)
 		os.Exit(0)
+	case "destroy":
+		if len(os.Args) != 3 || os.Args[2] != inst {
+			log.Fatalf("bad destroy args: %v", os.Args)
+		}
+		os.Exit(0)
 	case "put":
 		if len(os.Args) != 4 || os.Args[2] != inst {
 			log.Fatalf("bad put args: %v", os.Args)
@@ -524,6 +545,59 @@ func TestGomoteTransportReuse(t *testing.T) {
 	}
 	defer conn.Close()
 	runConn(t, conn, []string{"echo", "over gomote"}, "over gomote\n")
+}
+
+func TestCloseSSH(t *testing.T) {
+	setupDirs(t)
+	mockPATH(t, "ssh")
+	if err := closeSSH(mustParse(t, "ssh://kremvax")); err != nil {
+		t.Fatalf("closeSSH: %v", err)
+	}
+	// No shared connection running is not an error.
+	t.Setenv("MOTE_TEST_SSH_NOMASTER", "1")
+	if err := closeSSH(mustParse(t, "ssh://kremvax")); err != nil {
+		t.Fatalf("closeSSH with no shared connection: %v", err)
+	}
+}
+
+func TestCloseAll(t *testing.T) {
+	setupDirs(t)
+	mockPATH(t, "ssh", "gomote")
+	// A shared ssh connection, identified by its control socket.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	sock := filepath.Join(home, ".ssh", "sockets", "mote-user@kremvax-22")
+	if err := os.MkdirAll(filepath.Dir(sock), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sock, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// One gomote instance in the mote group and one outside it,
+	// which must be left alone.
+	t.Setenv("MOTE_TEST_GOMOTE_LIST",
+		"user-gotip-linux-amd64-7 (mote)\tgotip-linux-amd64\thost-amd64\texpires in 1h\n"+
+			"user-gotip-linux-arm64-1\tgotip-linux-arm64\thost-arm64\texpires in 1h\n")
+	t.Setenv("MOTE_TEST_GOMOTE_INST", "user-gotip-linux-amd64-7")
+	if err := closeAll(); err != nil {
+		t.Fatalf("closeAll: %v", err)
+	}
+}
+
+func TestCloseGomote(t *testing.T) {
+	setupDirs(t)
+	mockPATH(t, "gomote")
+	t.Setenv("MOTE_TEST_GOMOTE_LIST",
+		"user-gotip-linux-amd64-7 (mote)\tgotip-linux-amd64\thost-amd64\texpires in 1h\n")
+	t.Setenv("MOTE_TEST_GOMOTE_INST", "user-gotip-linux-amd64-7")
+	if err := closeGomote(mustParse(t, "gomote://gotip-linux-amd64")); err != nil {
+		t.Fatalf("closeGomote: %v", err)
+	}
+	// No instance to destroy is not an error.
+	t.Setenv("MOTE_TEST_GOMOTE_LIST", "")
+	if err := closeGomote(mustParse(t, "gomote://gotip-linux-amd64")); err != nil {
+		t.Fatalf("closeGomote with no instance: %v", err)
+	}
 }
 
 func TestResolveServer(t *testing.T) {

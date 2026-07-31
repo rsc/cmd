@@ -184,6 +184,10 @@ stops on that connection: the daemon copies raw bytes in both
 directions between the client and the tailnet, and the client speaks
 the protocol above through it to the remote server.
 
+A request of type Stop (sent by “mote close”) asks the daemon to shut
+down. The daemon answers with a response of type Stopping and then
+exits, cutting off any other connected clients.
+
 A server sends a request of type Serve, with Env set to the
 environment its commands should run with. The daemon starts listening
 on the tailnet and answers with a response of type Serving. It then

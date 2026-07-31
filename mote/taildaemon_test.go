@@ -115,6 +115,34 @@ func TestDaemonDial(t *testing.T) {
 	}
 }
 
+func TestDaemonStop(t *testing.T) {
+	// "mote close tail://name" stops the daemon.
+	setupDaemonDirs(t)
+	const name = "test"
+	d, err := newDaemon(name, new(fakeNet))
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- d.run() }()
+	if err := daemonStop(name); err != nil {
+		t.Fatalf("daemonStop: %v", err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("daemon run: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("daemon still running after daemonStop")
+	}
+	// Stopping a daemon that is not running is not an error
+	// (and must not start one).
+	if err := daemonStop(name); err != nil {
+		t.Fatalf("daemonStop with no daemon: %v", err)
+	}
+}
+
 func TestDaemonDialNoServer(t *testing.T) {
 	setupDaemonDirs(t)
 	fn := new(fakeNet)
