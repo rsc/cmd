@@ -102,10 +102,10 @@ type symmetricState struct {
 	cs *CipherState
 }
 
-func newSymmetricState() *symmetricState {
+func newSymmetricState(prologue []byte) *symmetricState {
 	h := sha256.Sum256([]byte(protocolName)) // len(protocolName) > 32
 	ss := &symmetricState{ck: h[:], h: h[:]}
-	ss.mixHash(nil) // empty prologue
+	ss.mixHash(prologue)
 	return ss
 }
 
@@ -167,22 +167,49 @@ func (ss *symmetricState) split() (*CipherState, *CipherState) {
 //
 //	-> psk, e
 //	<- e, ee
+//
+// Once WriteMessage or ReadMessage returns an error, the HandshakeState
+// is dead and every later call returns an error too.
 type HandshakeState struct {
 	ss        *symmetricState
 	initiator bool
 	psk       []byte
 	e         *ecdh.PrivateKey
 	re        *ecdh.PublicKey
+	fixedE    *ecdh.PrivateKey
 	msg       int
+	failed    bool
 }
 
 // NewHandshakeState returns a HandshakeState using the 32-byte
 // pre-shared key psk. The initiator sends the first message.
 func NewHandshakeState(initiator bool, psk []byte) (*HandshakeState, error) {
+	return newHandshakeState(initiator, psk, nil, nil)
+}
+
+// newHandshakeState is NewHandshakeState plus the two extra inputs
+// needed to replay the Noise test vectors: a prologue, and a fixed
+// ephemeral key to use instead of generating a fresh one. Both are
+// nil in ordinary use.
+func newHandshakeState(initiator bool, psk, prologue []byte, fixedE *ecdh.PrivateKey) (*HandshakeState, error) {
 	if len(psk) != 32 {
 		return nil, fmt.Errorf("noise: pre-shared key must be 32 bytes, not %d", len(psk))
 	}
-	return &HandshakeState{ss: newSymmetricState(), initiator: initiator, psk: psk}, nil
+	hs := &HandshakeState{
+		ss:        newSymmetricState(prologue),
+		initiator: initiator,
+		psk:       psk,
+		fixedE:    fixedE,
+	}
+	return hs, nil
+}
+
+// fail records that the handshake has failed and returns err.
+// Once a handshake fails, its symmetric state has absorbed input
+// from an unauthenticated peer, so it must never be used again.
+func (hs *HandshakeState) fail(err error) ([]byte, *CipherState, *CipherState, error) {
+	hs.failed = true
+	return nil, nil, nil, err
 }
 
 // WriteMessage appends the next handshake message, carrying the
@@ -190,15 +217,22 @@ func NewHandshakeState(initiator bool, psk []byte) (*HandshakeState, error) {
 // returns the two transport cipher states, in the order returned
 // by split.
 func (hs *HandshakeState) WriteMessage(out, payload []byte) ([]byte, *CipherState, *CipherState, error) {
+	if hs.failed {
+		return nil, nil, nil, errors.New("noise: handshake already failed")
+	}
 	if hs.initiator != (hs.msg == 0) || hs.msg > 1 {
-		return nil, nil, nil, errors.New("noise: out of turn")
+		return hs.fail(errors.New("noise: out of turn"))
 	}
 	if hs.msg == 0 {
 		hs.ss.mixKeyAndHash(hs.psk)
 	}
-	e, err := ecdh.X25519().GenerateKey(rand.Reader)
-	if err != nil {
-		return nil, nil, nil, err
+	e := hs.fixedE
+	if e == nil {
+		var err error
+		e, err = ecdh.X25519().GenerateKey(rand.Reader)
+		if err != nil {
+			return hs.fail(err)
+		}
 	}
 	hs.e = e
 	pub := e.PublicKey().Bytes()
@@ -208,13 +242,13 @@ func (hs *HandshakeState) WriteMessage(out, payload []byte) ([]byte, *CipherStat
 	if hs.msg == 1 {
 		dh, err := hs.e.ECDH(hs.re)
 		if err != nil {
-			return nil, nil, nil, errors.New("noise: bad peer ephemeral key")
+			return hs.fail(errors.New("noise: bad peer ephemeral key"))
 		}
 		hs.ss.mixKey(dh)
 	}
 	ct, err := hs.ss.encryptAndHash(payload)
 	if err != nil {
-		return nil, nil, nil, err
+		return hs.fail(err)
 	}
 	out = append(out, ct...)
 	hs.msg++
@@ -230,19 +264,22 @@ func (hs *HandshakeState) WriteMessage(out, payload []byte) ([]byte, *CipherStat
 // returns the two transport cipher states, in the order returned
 // by split.
 func (hs *HandshakeState) ReadMessage(out, message []byte) ([]byte, *CipherState, *CipherState, error) {
+	if hs.failed {
+		return nil, nil, nil, errors.New("noise: handshake already failed")
+	}
 	if hs.initiator == (hs.msg == 0) || hs.msg > 1 {
-		return nil, nil, nil, errors.New("noise: out of turn")
+		return hs.fail(errors.New("noise: out of turn"))
 	}
 	if hs.msg == 0 {
 		hs.ss.mixKeyAndHash(hs.psk)
 	}
 	if len(message) < 32 {
-		return nil, nil, nil, errors.New("noise: message too short")
+		return hs.fail(errors.New("noise: message too short"))
 	}
 	pub, rest := message[:32], message[32:]
 	re, err := ecdh.X25519().NewPublicKey(pub)
 	if err != nil {
-		return nil, nil, nil, errors.New("noise: bad peer ephemeral key")
+		return hs.fail(errors.New("noise: bad peer ephemeral key"))
 	}
 	hs.re = re
 	hs.ss.mixHash(pub)
@@ -250,13 +287,13 @@ func (hs *HandshakeState) ReadMessage(out, message []byte) ([]byte, *CipherState
 	if hs.msg == 1 {
 		dh, err := hs.e.ECDH(hs.re)
 		if err != nil {
-			return nil, nil, nil, errors.New("noise: bad peer ephemeral key")
+			return hs.fail(errors.New("noise: bad peer ephemeral key"))
 		}
 		hs.ss.mixKey(dh)
 	}
 	pt, err := hs.ss.decryptAndHash(rest)
 	if err != nil {
-		return nil, nil, nil, err
+		return hs.fail(err)
 	}
 	out = append(out, pt...)
 	hs.msg++
