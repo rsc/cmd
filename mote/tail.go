@@ -14,6 +14,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -25,7 +26,7 @@ import (
 // tailPort is the TCP port used for mote over Tailscale (MOTE).
 const tailPort = 6683
 
-// tailNames returns the names for which login credentials exist
+// tailNames returns the names mote has a node directory for
 // (the tail-name subdirectories of the configuration directory).
 func tailNames() []string {
 	var names []string
@@ -33,6 +34,21 @@ func tailNames() []string {
 	for _, e := range entries {
 		if e.IsDir() && strings.HasPrefix(e.Name(), "tail-") {
 			names = append(names, strings.TrimPrefix(e.Name(), "tail-"))
+		}
+	}
+	return names
+}
+
+// loggedInTailNames returns the names this machine is logged in as.
+// A node directory can exist without credentials in it: bringing a node
+// up creates the directory before the registration that fills it in, so
+// an abandoned or failed registration leaves one behind. Such a
+// directory is not a login and must not be mistaken for one.
+func loggedInTailNames() []string {
+	var names []string
+	for _, name := range tailNames() {
+		if haveTailCredentials(name) {
+			names = append(names, name)
 		}
 	}
 	return names
@@ -50,22 +66,29 @@ func hostTailName() string {
 }
 
 // clientTailName returns the name to use for the local client:
-// the host name if credentials exist for it, the single registered
-// name if there is exactly one, and otherwise the host name
+// the host name if this machine is logged in as it, the single name it
+// is logged in as if there is exactly one, and otherwise the host name
 // (for which credentials will be established).
-func clientTailName() string {
-	names := tailNames()
+// An existing login comes first because registering is the expensive,
+// visible operation: a machine that has run “mote login tail://name”
+// or “mote serve tail://name” should not add a second node to the
+// tailnet just to run a command.
+func clientTailName() (string, error) {
+	names := loggedInTailNames()
 	host := hostTailName()
-	if len(names) == 1 && names[0] != host {
-		return names[0]
+	if len(names) == 0 || slices.Contains(names, host) {
+		return host, nil
 	}
-	return host
+	if len(names) == 1 {
+		return names[0], nil
+	}
+	return "", fmt.Errorf("multiple Tailscale logins (%s); run mote login tail://%s to use this host name", strings.Join(names, ", "), host)
 }
 
 // registeredTailName returns the single registered name,
 // for use expanding the shorthand "tail:".
 func registeredTailName() (string, error) {
-	names := tailNames()
+	names := loggedInTailNames()
 	switch len(names) {
 	case 0:
 		return "", fmt.Errorf("not logged in to Tailscale; run mote login tail://name or mote serve tail://name")
@@ -102,10 +125,9 @@ func tailLogin(name string) error {
 	if haveTailCredentials(name) {
 		return nil
 	}
-	dir := tailDir(name)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
+	// Prompt before creating the node directory, which tsnet does itself:
+	// an abandoned prompt should leave nothing behind that later looks
+	// like a login. See loggedInTailNames.
 	fmt.Fprintf(os.Stderr, "Tailscale auth key: ")
 	sc := bufio.NewScanner(os.Stdin)
 	if !sc.Scan() || strings.TrimSpace(sc.Text()) == "" {
@@ -211,7 +233,11 @@ func dialTail(u *url.URL) (io.ReadWriteCloser, error) {
 	if server == "" {
 		return nil, fmt.Errorf("server URL must have the form tail://name")
 	}
-	return daemonDial(clientTailName(), fmt.Sprintf("mote-%s:%d", server, tailPort))
+	name, err := clientTailName()
+	if err != nil {
+		return nil, err
+	}
+	return daemonDial(name, fmt.Sprintf("mote-%s:%d", server, tailPort))
 }
 
 // serveTail implements "mote serve tail://name" (or "mote serve tail:"),

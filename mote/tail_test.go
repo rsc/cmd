@@ -6,11 +6,56 @@ package main
 
 import (
 	"net/netip"
+	"os"
+	"strings"
 	"testing"
 
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/types/key"
 )
+
+func TestClientTailName(t *testing.T) {
+	host := hostTailName()
+	tests := []struct {
+		name    string
+		dirs    []string // node directories, "name" logged in, "name!" not
+		want    string
+		wantErr bool
+	}{
+		{"none", nil, host, false},
+		{"host", []string{host}, host, false},
+		{"other", []string{"other"}, "other", false},
+		{"both", []string{host, "other"}, host, false},
+		// An abandoned "mote login" leaves a directory with no
+		// credentials in it, which is not a login to fall back to.
+		{"abandoned", []string{host + "!", "other"}, "other", false},
+		{"none-logged-in", []string{host + "!", "other!"}, host, false},
+		{"ambiguous", []string{"other", "another"}, "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("MOTECONFIG", t.TempDir())
+			for _, dir := range tt.dirs {
+				name, loggedIn := dir, true
+				if n, ok := strings.CutSuffix(dir, "!"); ok {
+					name, loggedIn = n, false
+				}
+				if err := os.MkdirAll(tailDir(name), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if loggedIn {
+					if err := os.WriteFile(tailStatePath(name), []byte("state"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			name, err := clientTailName()
+			if name != tt.want || (err != nil) != tt.wantErr {
+				t.Errorf("clientTailName() = %q, %v; want %q, error=%v", name, err, tt.want, tt.wantErr)
+			}
+		})
+	}
+}
 
 func TestTailPeerAddr(t *testing.T) {
 	ip1 := netip.MustParseAddr("100.64.0.1")

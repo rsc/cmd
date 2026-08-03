@@ -193,6 +193,9 @@ The server registers on the tailnet as mote-servername
 and the client registers as mote-clientname,
 where clientname is the first element of the local host name.
 To set a different client name, run “mote login tail://clientname”.
+A machine only ever registers one node: if it is already logged in
+under some name, whether from “mote login” or “mote serve”,
+mote uses that login instead of registering again as the host name.
 
 Once the system is registered, either by a previous “mote serve”
 or an explicit “mote login”, “mote serve tail://servername”
