@@ -1,8 +1,8 @@
 /*
-Mote runs commands on remote machines,
+Mote connects to remote machine and runs commands,
 especially cross-compiled Go tests.
-It can run commands using a variety of mechanisms:
-SSH, Gomote, direct TCP, and TCP over Tailscale.
+It can connect using a variety of mechanisms:
+SSH, Gomote, TCP over Tailscale, and authenticated direct TCP.
 
 Usage:
 
@@ -27,7 +27,7 @@ In the command, ssh://kremvax is a URL denoting the server to use.
 The “Using SSH” section below explains how to set up kremvax.
 
 A more interesting example is to upload and run a cross-compiled Go binary.
-Assuming kremvax is now an x86-64 Linux system:
+Assuming kremvax is an x86-64 Linux system:
 
 	% GOOS=linux GOARCH=amd64 go build $(go env GOROOT)/test/helloworld.go
 	% mote @ssh://kremvax ./helloworld
@@ -85,7 +85,7 @@ Running “mote alias” without any arguments lists all the known aliases:
 	%
 
 Each time a mote command runs, it discovers the GOOS and GOARCH of the remote system.
-If there is no alias for that $GOOS-$GOARCH already, mote defines one automatically.
+If there is no alias named $GOOS-$GOARCH already, mote adds one resolving to that system.
 In this case, mote has defined a linux-amd64 alias.
 
 If the “@server” is omitted, mote tries three fallbacks, in order:
@@ -122,9 +122,9 @@ The runner script is “mote -t” applied to the arguments:
 The script names no server, so mote uses the fallbacks listed above.
 Cross-compiling on the command line sets $GOOS and $GOARCH in the
 environment that “go test” passes to the script, selecting the alias for
-the target system; using “go env -w” instead leaves them unset, and mote
-reads them from the test binary. Either way the server is the
-$GOOS-$GOARCH alias.
+the target system; using “go env -w” instead would leave them unset,
+and mote would read them from the test binary.
+Either way, the implied server is the $GOOS-$GOARCH alias.
 
 Setting $MOTE overrides that choice for a single command, naming an alias
 or a URL to use instead:
@@ -137,9 +137,7 @@ or a URL to use instead:
 	PASS
 	%
 
-That is useful when more than one server runs the same $GOOS-$GOARCH,
-or to send one test run to a particular machine without redefining
-the alias.
+Setting $MOTE is useful when more than one server runs the same $GOOS-$GOARCH.
 
 # Using SSH
 
@@ -164,7 +162,8 @@ Specifically, it runs:
 
 # Using Tailscale
 
-Using mote over SSH requires that the server be directly accessible. Using Tailscale removes that requirement.
+Using mote over SSH requires that the server be directly accessible.
+Mote's builtin Tailscale library removes that requirement.
 
 To serve mote over Tailscale:
 
@@ -187,7 +186,7 @@ Mote registers with the tag “tag:mote”, so before generating the key,
 define tag:mote in the tailnet policy file's “tagOwners” section,
 and then select tag:mote on the key generation form.
 Tagged nodes have no expiring human identity attached,
-and the tag makes it easy to write policy rules for mote servers.
+and the tag makes it easy to write network policy rules for mote servers.
 
 The server registers on the tailnet as mote-servername
 and the client registers as mote-clientname,
@@ -195,26 +194,23 @@ where clientname is the first element of the local host name.
 To set a different client name, run “mote login tail://clientname”.
 A machine only ever registers one node: if it is already logged in
 under some name, whether from “mote login” or “mote serve”,
-mote uses that login instead of registering again as the host name.
+mote uses that login instead of registering again.
 
 Once the system is registered, either by a previous “mote serve”
 or an explicit “mote login”, “mote serve tail://servername”
 can be shortened to “mote serve tail:”.
 
-Bringing a Tailscale node up takes a few seconds, and Tailscale does not
-expect nodes to come and go once per command, so mote keeps the node running
-in a background daemon, the way ssh keeps a connection with ControlMaster.
+Bringing up a Tailscale node takes a few seconds, and Tailscale does not
+expect nodes to come and go frequently, so mote keeps the node running
+in a background daemon, the same way ssh keeps a connection.
 The first mote that needs the tailnet starts the daemon; later ones find it
 and reuse it, so only the first command pays for the connection.
 The daemon exits after 30 minutes with nothing to do.
 
-Because the daemon holds the node, a mote client and a mote server on the
-same machine share it, which is not possible when each command brings up a
-node of its own.
-
-The daemon keeps its socket and its log in the node's configuration
-directory, tail-name. If a mote command reports that the daemon would not
-start, tail-name/log has the reason.
+Mote's tailscale client is built entirely into the mote binary
+and does not reconfigure or otherwise affect the host networking stack.
+Other programs on the machine will not use the Tailscale connection
+managed by mote.
 
 # Using Direct TCP
 
@@ -234,12 +230,12 @@ The mote command will print a completed URL when it begins serving.
 To run a remote command:
 
 	% mote @tcp://host:port/password hostname
-	moskvax
+	kremlsun.arpa
 	%
 
 # Using Gomotes
 
-The Go project runs a different remote execution facility known as gomotes,
+The Go project runs a custom remote execution facility known as gomotes,
 which provide access to the various builders used for Go's own testing.
 If the gomote command is found on the PATH, mote can use these servers.
 
@@ -249,52 +245,33 @@ To run a remote command:
 	TODO
 	%
 
+(If you haven't used gomote recently, you may need to run “gomote login” first.)
+
 The mote client installs and starts the mote server after creating the gomote.
 
-There are two ways to start that server, and mote uses whichever the
-gomote command and the ssh proxy in use will allow. It first tries to
-run the server directly:
-
-	gomote ssh <instance> ./mote serve -
-
-Older gomote commands take no command to run, and older ssh proxies
-serve only interactive sessions, so mote falls back to starting the
-server the way a person would: it runs “gomote ssh <instance>”, which
-gives it a shell, and types a command line replacing that shell with
-the mote server. The shell arrives on a terminal, which does not carry
-arbitrary bytes, so the server encodes that connection in hex, as
-described in protocol.md. Uploads and output are unaffected apart from
-taking twice the bytes on the wire.
-
 If the gomote command is found on the PATH, mote creates GOOS-GOARCH aliases
-backed by gomotes the first time they are needed. For example:
+backed by gomotes as needed. For example:
 
 	% mote go-setup
-	% GOOS=freebsd GOARCH=amd64 go test strings
+	% mote alias linux-arm64
+	mote: no alias for linux-arm64
+	% GOOS=linux GOARCH=arm64 go test strings
 	PASS
+	% mote alias linux-arm64
+	gomote://gotip-linux-arm64
 	%
 
 # Closing Servers
 
-Each transport leaves something running so that the next mote command
-is fast: ssh keeps a shared connection open for 30 minutes, Tailscale
-keeps the local node's daemon running for 30 minutes after its last
-use, and a gomote instance lives until its lease expires. All of these
-go away on their own, but “mote close URL” shuts them down early:
+Each transport leaves the connection open for the next mote command,
+timing out after 30 minutes.
+To shut these down early, use “mote close URL”:
 
 	% mote close ssh://kremvax
 	% mote close tail:
 	% mote close gomote://gotip-linux-amd64
 	mote: destroyed gomote user-gotip-linux-amd64-0
 	%
-
-For ssh, close stops the shared connection to the named host. For
-Tailscale, close stops the local daemon named by the URL, like login
-and serve (tail: means the usual single login); connections to any
-number of servers ran through that one daemon. For gomotes, close
-destroys the mote-created instances with the named builder type.
-An alias works in place of the URL, as does a $GOOS-$GOARCH pair
-backed by a gomote.
 
 Running “mote close” with no URL closes everything: every shared ssh
 connection, every local Tailscale daemon, and every gomote instance
@@ -332,28 +309,3 @@ have gone unused for more than three hours.
 Running “mote clean” deletes the entire cache.
 */
 package main
-
-/*
-IMPLEMENTATION
-
-The protocol between client and server is described in protocol.md.
-
-The command should follow the same general conventions as the other commands
-in this tree as far as usage messages, structure, log prints.
-Tailscale should use tailscale.com/tsnet.
-See /Users/rsc/src/rsc.io/tmp/tschat for an example that tested that tsnet worked.
-
-There is a cpace implementation in internal/cpace.
-
-TESTING
-
-Most testing can be done using testing/synctest and a fake network connection,
-checking both with and without a password.
-
-Mocking the SSH and Tailscale connections will be more difficult.
-A mock ssh can be made by running the test binary with os.Args[0] set to "ssh".
-
-A mock gomote command will also be needed,
-probably running the test binary with os.Args[0] set to "gomote".
-Since we only use gomote put and gomote ssh that should not be too hard to mock.
-*/
