@@ -6,6 +6,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -25,8 +26,14 @@ const gomoteGroup = "mote"
 // dialGomote connects to a gomote://builder server (for example
 // gomote://gotip-linux-amd64), creating a gomote instance if needed,
 // uploading a mote binary cross-compiled for the builder, and running
-// "mote serve -" over gomote ssh.
-func dialGomote(u *url.URL) (io.ReadWriteCloser, error) {
+// the mote server on the instance over gomote ssh.
+//
+// There are two ways to start the server, and which ones work depends
+// on the versions of the gomote command and the ssh proxy in use, so
+// dialGomote tries the good one and falls back to the one that works
+// everywhere. Only a completed handshake proves that a way worked,
+// which is why this transport runs the handshake itself.
+func dialGomote(u *url.URL) (*Conn, error) {
 	builder := u.Host
 	goos, goarch, err := builderOSArch(builder)
 	if err != nil {
@@ -44,29 +51,84 @@ func dialGomote(u *url.URL) (io.ReadWriteCloser, error) {
 	if _, err := gomoteOutput(exec.Command("gomote", "put", inst, bin)); err != nil {
 		return nil, err
 	}
-	// gomote ssh runs an interactive shell on the instance; it cannot
-	// pass a command the way ssh can. The session has no pty, so the
-	// shell reads commands from standard input without echoing them:
-	// send one line replacing the shell with the mote server, and the
-	// pipes then carry the mote protocol. Anything the shell prints
-	// first is preamble text that the handshake skips.
-	//
-	// This does not work against today's gomote ssh proxy, which
-	// rejects sessions that do not allocate a pty ("scp etc not yet
-	// supported"; go.dev/issue/21140) and inserts a cooked pty of its
-	// own that no byte-transparent protocol can survive. Fixing that
-	// requires a change to the proxy, not to mote; until then the
-	// proxy's message is reported as the handshake failure.
-	c := exec.Command("gomote", "ssh", inst)
+	conn, cmdErr := gomoteCommand(inst)
+	if cmdErr == nil {
+		return conn, nil
+	}
+	conn, shellErr := gomoteShell(inst)
+	if shellErr == nil {
+		return conn, nil
+	}
+	return nil, fmt.Errorf("gomote ssh %s %s: %v\ngomote ssh %s (shell): %v",
+		inst, moteServe, cmdErr, inst, shellErr)
+}
+
+// moteServe and moteServeHex are the commands that start the mote
+// server on a gomote instance, where "gomote put" left the binary in
+// the home directory: the plain server for a connection that carries
+// bytes unchanged, and the hex server for one that does not.
+const (
+	moteServe    = "./mote serve -"
+	moteServeHex = "./mote serve -hex-"
+)
+
+// gomoteCommand connects to the mote server on inst by handing the
+// server command to gomote ssh, which runs it without a terminal, so
+// the connection carries the protocol byte for byte.
+//
+// This is the way in that keeps no terminal in the path, and the one
+// that older software cannot do: gomote commands that take only an
+// instance name reject the command outright, and ssh proxies that
+// serve only interactive sessions reject one that asks for no terminal
+// ("scp etc not yet supported"; go.dev/issue/21140). Either failure
+// arrives here as a failed handshake, and the caller tries the shell.
+func gomoteCommand(inst string) (*Conn, error) {
+	c := exec.Command("gomote", "ssh", inst, moteServe)
 	c.Stderr = new(bytes.Buffer) // hidden unless an error is reported
 	p, err := startProcConn(c)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := io.WriteString(p, "exec ./mote serve -\n"); err != nil {
+	conn, err := clientConn(p, "")
+	if err != nil {
 		return nil, p.abort(err)
 	}
-	return p, nil
+	return conn, nil
+}
+
+// gomoteShell connects to the mote server on inst the way a person
+// would: it runs gomote ssh with no command, waits for the shell, and
+// types a command line that replaces the shell with the mote server.
+//
+// The shell only appears if ssh asks the far end for a terminal, and
+// ssh only asks when it has a terminal of its own, so mote gives it
+// one. That terminal and the ones the ssh proxy adds along the way
+// rewrite newlines and echo back what they read, so the server runs in
+// hex, which survives all of it. Anything the shell printed before the
+// hex handshake is preamble, including the echo of the command line.
+func gomoteShell(inst string) (*Conn, error) {
+	c := exec.Command("gomote", "ssh", inst)
+	c.Stderr = new(bytes.Buffer) // hidden unless an error is reported
+	p, err := startPtyConn(c)
+	if errors.Is(err, errors.ErrUnsupported) {
+		// No terminals on this system. Plain pipes still reach a proxy
+		// that accepts sessions without one.
+		p, err = startProcConn(c)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if _, err := io.WriteString(p, "exec "+moteServeHex+"\n"); err != nil {
+		return nil, p.abort(err)
+	}
+	if err := scanHexHandshake(p); err != nil {
+		return nil, p.abort(err)
+	}
+	conn, err := clientConn(newHexConn(p), "")
+	if err != nil {
+		return nil, p.abort(err)
+	}
+	return conn, nil
 }
 
 // gomoteOutput runs the gomote command c, returning its standard output.

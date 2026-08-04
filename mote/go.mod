@@ -5,7 +5,9 @@ go 1.27
 // Dependency versions match rsc.io/tmp/tschat, known to work with tsnet.
 
 require (
+	github.com/creack/pty v1.1.24
 	golang.org/x/crypto v0.54.0
+	golang.org/x/term v0.45.0
 	tailscale.com v1.102.0
 )
 
@@ -46,7 +48,6 @@ require (
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/term v0.45.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect

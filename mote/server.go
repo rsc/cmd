@@ -20,6 +20,12 @@ import (
 )
 
 // cmdServe implements "mote serve URL".
+//
+// Along with the URLs that name a server, it accepts "-", to serve on
+// standard input and output, and "-hex-", to serve there in hex (see
+// hex.go). The hex form is spelled as a URL rather than a flag because
+// nothing but mote itself has any reason to ask for it; serve parses
+// no flags, so the leading dash costs nothing.
 func cmdServe(args []string) {
 	if len(args) != 1 {
 		usage()
@@ -30,6 +36,10 @@ func cmdServe(args []string) {
 		if err := serve(stdioConn{}, "", nil); err != nil {
 			log.Fatal(err)
 		}
+	case url == "-hex-":
+		if err := serve(serveHex(), "", nil); err != nil {
+			log.Fatal(err)
+		}
 	case strings.HasPrefix(url, "tcp://"):
 		serveTCP(url)
 	case strings.HasPrefix(url, "tail:"):
@@ -37,6 +47,24 @@ func cmdServe(args []string) {
 	default:
 		log.Fatalf("cannot serve %s", url)
 	}
+}
+
+// serveHex prepares standard input and output for a hex-encoded
+// session: it takes the terminal, if there is one, out of cooked mode,
+// so that it stops echoing back what the client writes and stops
+// rewriting the bytes passing through; it writes the handshake line
+// that tells the client hex encoding is beginning; and it returns the
+// encoded connection to serve. See hex.go.
+func serveHex() io.ReadWriteCloser {
+	if _, err := makeStdinRaw(); err != nil {
+		// Report and keep going: the terminal may already be raw, and
+		// if it is not, the client reports the resulting mangled data.
+		// This lands ahead of the handshake line, where the client
+		// treats it as preamble.
+		fmt.Fprintf(os.Stderr, "mote: %v\n", err)
+	}
+	os.Stdout.WriteString(hexHandshake)
+	return newHexConn(stdioConn{})
 }
 
 // stdioConn is an io.ReadWriteCloser for serving on standard input and output.

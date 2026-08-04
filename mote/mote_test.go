@@ -487,13 +487,35 @@ func gomoteMockMain() {
 		}
 		os.Exit(0)
 	case "ssh":
-		// Like the real gomote ssh: only an instance name, no command;
-		// print the underlying ssh invocation, and hand the connection
-		// to a "shell" that reads a command line from standard input.
-		if len(os.Args) != 3 || os.Args[2] != inst {
+		if len(os.Args) < 3 || os.Args[2] != inst {
 			log.Fatalf("bad ssh args: %v", os.Args)
 		}
 		fmt.Printf("$ /usr/bin/ssh -p 2222 %s@gomotessh.golang.org\n", inst)
+		if len(os.Args) > 3 {
+			// A command to run, which the real gomote passes to ssh,
+			// which runs it without a terminal. $MOTE_TEST_GOMOTE_NOCMD
+			// makes the mock refuse it, as older gomotes and older ssh
+			// proxies do, so that the test exercises the shell fallback.
+			if os.Getenv("MOTE_TEST_GOMOTE_NOCMD") != "" {
+				fmt.Fprintf(os.Stderr, "ssh usage: gomote ssh <instance>\n")
+				os.Exit(1)
+			}
+			if got := strings.Join(os.Args[3:], " "); got != moteServe {
+				log.Fatalf("bad ssh command %q", got)
+			}
+			if err := serve(stdioConn{}, "", nil); err != nil {
+				log.Fatal(err)
+			}
+			os.Exit(0)
+		}
+		// No command: a "shell" that reads a command line from standard
+		// input, as the real gomote ssh reaches through a terminal.
+		// $MOTE_TEST_GOMOTE_NOSHELL makes the mock refuse this too, as
+		// an ssh proxy that serves only interactive sessions does.
+		if os.Getenv("MOTE_TEST_GOMOTE_NOSHELL") != "" {
+			fmt.Printf("scp etc not yet supported; https://go.dev/issue/21140\n")
+			os.Exit(0)
+		}
 		var line []byte
 		var b [1]byte
 		for b[0] != '\n' {
@@ -502,11 +524,28 @@ func gomoteMockMain() {
 			}
 			line = append(line, b[0])
 		}
-		if string(line) != "exec ./mote serve -\n" {
+		switch strings.TrimSuffix(string(line), "\n") {
+		default:
 			log.Fatalf("bad shell command %q", line)
-		}
-		if err := serve(stdioConn{}, "", nil); err != nil {
-			log.Fatal(err)
+		case "exec " + moteServe:
+			if err := serve(stdioConn{}, "", nil); err != nil {
+				log.Fatal(err)
+			}
+		case "exec " + moteServeHex:
+			// Mote gave this process a terminal and took the terminal
+			// out of cooked mode, so nothing mangles the bytes here.
+			// Mangle them deliberately, the way the terminals between a
+			// real client and a real gomote do, to hold the transport
+			// to what it promises: escape sequences and a carriage
+			// return ahead of the handshake, then CRLF line endings.
+			if _, err := makeStdinRaw(); err != nil {
+				log.Fatalf("raw mode: %v", err)
+			}
+			fmt.Printf("\x1b[?2004l\r")
+			os.Stdout.WriteString(hexHandshake)
+			if err := serve(newHexConn(crlfConn{stdioConn{}}), "", nil); err != nil {
+				log.Fatal(err)
+			}
 		}
 		os.Exit(0)
 	}
@@ -535,6 +574,40 @@ func TestGomoteTransport(t *testing.T) {
 	}
 	defer conn.Close()
 	runConn(t, conn, []string{"echo", "over gomote"}, "over gomote\n")
+}
+
+// TestGomoteTransportShell exercises the fallback for gomote commands
+// and ssh proxies that cannot run a command directly: mote opens a
+// terminal, types a command line into the shell, and runs the session
+// in hex. The mock mangles the bytes the way a terminal does.
+func TestGomoteTransportShell(t *testing.T) {
+	setupDirs(t)
+	mockPATH(t, "gomote", "go")
+	t.Setenv("MOTE_TEST_GOMOTE_NOCMD", "1")
+	conn, err := dialServer("gomote://gotip-linux-amd64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	runConn(t, conn, []string{"echo", "over gomote"}, "over gomote\n")
+}
+
+// TestGomoteTransportUnreachable checks that when neither way in
+// works, the error describes both attempts.
+func TestGomoteTransportUnreachable(t *testing.T) {
+	setupDirs(t)
+	mockPATH(t, "gomote", "go")
+	t.Setenv("MOTE_TEST_GOMOTE_NOCMD", "1")
+	t.Setenv("MOTE_TEST_GOMOTE_NOSHELL", "1")
+	_, err := dialServer("gomote://gotip-linux-amd64")
+	if err == nil {
+		t.Fatal("dialServer succeeded, want error")
+	}
+	for _, want := range []string{"ssh usage: gomote ssh", "not yet supported"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("dialServer error missing %q:\n%v", want, err)
+		}
+	}
 }
 
 func TestGomoteTransportExistingGroup(t *testing.T) {

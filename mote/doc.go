@@ -251,6 +251,21 @@ To run a remote command:
 
 The mote client installs and starts the mote server after creating the gomote.
 
+There are two ways to start that server, and mote uses whichever the
+gomote command and the ssh proxy in use will allow. It first tries to
+run the server directly:
+
+	gomote ssh <instance> ./mote serve -
+
+Older gomote commands take no command to run, and older ssh proxies
+serve only interactive sessions, so mote falls back to starting the
+server the way a person would: it runs “gomote ssh <instance>”, which
+gives it a shell, and types a command line replacing that shell with
+the mote server. The shell arrives on a terminal, which does not carry
+arbitrary bytes, so the server encodes that connection in hex, as
+described in protocol.md. Uploads and output are unaffected apart from
+taking twice the bytes on the wire.
+
 If the gomote command is found on the PATH, mote creates GOOS-GOARCH aliases
 backed by gomotes the first time they are needed. For example:
 

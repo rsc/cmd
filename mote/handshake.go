@@ -64,17 +64,33 @@ func clientHandshake(rw io.ReadWriter) error {
 }
 
 // scanServerHello scans the bytes coming from the server for the server
-// hello line, ignoring up to maxPreamble bytes of preceding text (such as
-// ssh login banners). If the server sends too much text, stalls for more
-// than helloTimeout, or hangs up, scanServerHello reports the text as an
-// error message. It reads one byte at a time, so it never consumes bytes
-// beyond the hello line's newline.
+// hello line.
+func scanServerHello(r io.Reader) error {
+	return scanHello(r, "server hello", func(line string) (bool, error) {
+		if line == serverHello {
+			return true, nil
+		}
+		if strings.HasPrefix(line, helloPrefix) {
+			// The text arrived but the binary bytes around it did not.
+			return false, fmt.Errorf("connection to server is not binary safe")
+		}
+		return false, nil
+	})
+}
+
+// scanHello scans the bytes coming from the server for the hello line
+// that match accepts, ignoring up to maxPreamble bytes of preceding
+// text (such as ssh login banners). If the server sends too much text,
+// stalls for more than helloTimeout, or hangs up, scanHello reports the
+// text as an error message, naming what it was waiting for. It reads one
+// byte at a time, so it never consumes bytes beyond the hello line's
+// newline.
 //
 // The connection is a network connection or a pipe (*os.File), both of
 // which implement read deadlines; the stall timeout uses those.
-// If r has no working SetReadDeadline, scanServerHello reads without
+// If r has no working SetReadDeadline, scanHello reads without
 // a timeout.
-func scanServerHello(r io.Reader) error {
+func scanHello(r io.Reader, what string, match func(line string) (bool, error)) error {
 	rd, _ := r.(deadlineReader)
 	if rd != nil {
 		if err := rd.SetReadDeadline(time.Now().Add(helloTimeout)); err != nil {
@@ -99,12 +115,12 @@ func scanServerHello(r io.Reader) error {
 	for {
 		if _, err := io.ReadFull(r, buf[:]); err != nil {
 			if errors.Is(err, os.ErrDeadlineExceeded) {
-				return fail("timeout waiting for server hello")
+				return fail("timeout waiting for %s", what)
 			}
 			if err == io.EOF || err == io.ErrUnexpectedEOF {
-				return fail("connection closed waiting for server hello")
+				return fail("connection closed waiting for %s", what)
 			}
-			return fail("reading server hello: %v", err)
+			return fail("reading %s: %v", what, err)
 		}
 		if rd != nil {
 			rd.SetReadDeadline(time.Now().Add(helloTimeout))
@@ -113,15 +129,16 @@ func scanServerHello(r io.Reader) error {
 		line = append(line, buf[0])
 		if buf[0] != '\n' {
 			if len(preamble)+len(line) > maxPreamble {
-				return fail("no server hello in first %d bytes", maxPreamble)
+				return fail("no %s in first %d bytes", what, maxPreamble)
 			}
 			continue
 		}
-		if string(line) == serverHello {
-			return nil
+		ok, err := match(string(line))
+		if err != nil {
+			return err
 		}
-		if strings.HasPrefix(string(line), helloPrefix) {
-			return fmt.Errorf("connection to server is not binary safe")
+		if ok {
+			return nil
 		}
 		preamble = append(preamble, line...)
 		line = nil

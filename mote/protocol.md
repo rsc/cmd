@@ -73,6 +73,42 @@ The client answers with its own hello:
 
 The server applies the same binary-safety check to that line.
 
+## Hex Encoding
+
+Some connections cannot carry arbitrary bytes. The gomote transport may
+have to run the mote server in a shell on a terminal (see the “Using
+Gomotes” section of doc.go), and the terminals along the way rewrite
+newlines, echo back what they read, and act on control characters
+instead of passing them along.
+
+A server started as `mote serve -hex-` runs the whole conversation
+above in hex. That spelling is a URL, not a flag — only mote itself has
+any reason to ask for hex, so it is left out of the documented usage.
+Before any encoding, the server writes
+
+	mote hex handshake\n
+
+which the client looks for the way it looks for the server hello: after
+whatever the shell has already printed, including the echo of the
+command line that started the server. A terminal may deliver the line
+as `...\r\n` and may leave escape sequences ahead of it on the same
+line, so the client matches the end of a line rather than a whole line.
+
+After that line, every byte in both directions is two hex digits.
+The encoder writes a newline after every 64 bytes of data, keeping the
+lines short enough for a terminal that is still buffering input by the
+line; decoders ignore carriage returns and newlines wherever they
+appear, including between the two digits of a byte. Anything else in
+the stream is not protocol data but a message from the far end, and
+decoding fails reporting that text.
+
+The encoding leaves only hex digits and newlines on the wire, so no
+terminal has anything to act on — but a terminal that echoes would
+still feed the client its own bytes back. Both ends put their terminal
+in raw mode to stop that: mote before it starts the transport
+subprocess, and the hex server on the terminal it finds on its
+standard input.
+
 ## Authentication
 
 A direct TCP connection (tcp://host:port/password) is authenticated
