@@ -111,10 +111,11 @@ standard input.
 
 ## Authentication
 
-A direct TCP connection (tcp://host:port/password) is authenticated
-and encrypted using the URL's password; the other transports are
-already authenticated and encrypted by ssh, gomote, or Tailscale, and
-skip this step.
+A direct TCP connection (tcp://host:port) is authenticated and
+encrypted using a password shared by client and server, which each
+keeps in password.txt in its configuration directory, keyed by the URL
+it uses for the server; the other transports are already authenticated
+and encrypted by ssh, gomote, or Tailscale, and skip this step.
 
 First, a CPace handshake (X25519, SHA-512, channel identifier
 “rsc.io/cmd/mote tcp”, no additional data) proves that both sides hold

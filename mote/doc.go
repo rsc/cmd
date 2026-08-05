@@ -217,23 +217,39 @@ managed by mote.
 # Using Direct TCP
 
 If the client can connect to the server, the simplest mechanism is direct TCP.
-For direct TCP, the URL has the form tcp://host:port/password, where password
-is a password shared between client and server,
-used to authenticate the connection and then to establish an encrypted conversation.
+For direct TCP, the URL has the form tcp://host:port.
+Client and server share a password, used to authenticate the connection
+and then to establish an encrypted conversation.
 
-To serve direct TCP:
+Running “mote login URL” prompts for the password to use with a server
+and saves it for later runs:
 
-	% mote serve tcp://host:port/password
-	mote: serving tcp://host:port/password
+	% mote login tcp://kremlsun:6683
+	password for tcp://kremlsun:6683:
+	mote: wrote password for tcp://kremlsun:6683 to /home/rsc/.config/mote/password.txt
+	%
 
-The host can be omitted (tcp://:port/password) to mean listening on all interfaces.
+Each machine saves the password under the URL that machine uses,
+so the client and the server can name the same server differently.
+The server logs in using the URL it serves, and then serves it:
+
+	% mote login tcp://:6683
+	password for tcp://:6683:
+	mote: wrote password for tcp://:6683 to /home/rsc/.config/mote/password.txt
+	% mote serve tcp://:6683
+	mote: serving tcp://kremlsun:6683
+
+The host can be omitted (tcp://:port) to mean listening on all interfaces.
 The mote command will print a completed URL when it begins serving.
 
 To run a remote command:
 
-	% mote @tcp://host:port/password hostname
+	% mote @tcp://kremlsun:6683 hostname
 	kremlsun.arpa
 	%
+
+Each server has its own password: logging in to a second server adds
+an entry instead of replacing the first.
 
 # Using Gomotes
 
@@ -297,8 +313,15 @@ of the user configuration directory. For example:
 In that directory:
 
   - aliases.txt contains the alias definitions, one alias per line.
+  - password.txt contains the passwords shared with tcp:// servers,
+    as written by “mote login”: one line per server, holding the server
+    URL and then the password, separated by a space.
   - tail-name/ is a directory that holds the login credentials for tail://name,
     along with the service socket, lock, and log of the daemon holding that node.
+
+Both the Tailscale credentials and the tcp:// passwords are stored in plain text,
+protected only by the file permissions of the configuration directory
+and the files in it.
 
 Setting $MOTECONFIG overrides the location of the configuration directory.
 

@@ -262,19 +262,3 @@ func serveTail(rawURL string) {
 		log.Fatal(err)
 	}
 }
-
-// cmdLogin implements "mote login URL", establishing Tailscale
-// credentials for tail://name.
-func cmdLogin(args []string) {
-	if len(args) != 1 {
-		usage()
-	}
-	u, err := url.Parse(args[0])
-	if err != nil || u.Scheme != "tail" || u.Host == "" {
-		log.Fatalf("login URL must have the form tail://name")
-	}
-	if err := tailLogin(u.Host); err != nil {
-		log.Fatal(err)
-	}
-	log.Printf("logged in as mote-%s", u.Host)
-}
