@@ -25,6 +25,10 @@ func cmdRun(args []string) {
 			usage()
 		}
 	}
+	// Resolve the command to the file it names before anything else
+	// looks at it: the name travels to the server in Args, which is how
+	// the server knows which uploaded file to run.
+	args[0] = cmdFile(args[0])
 	files, err := uploadList(args[0], uploads, *testData)
 	if err != nil {
 		log.Fatal(err)

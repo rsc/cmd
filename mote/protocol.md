@@ -167,9 +167,21 @@ slash-separated form, Hash is the lowercase hex SHA-256 of the file
 content, and Size is its length in bytes. The server strips any
 leading volume name (like C:) from the path and re-roots it in a fresh
 temporary directory, creating each file with mode 0755. The server
-maps Dir the same way, so a command name like ./prog or ../testprog is
-resolved relative to the re-rooted directory. Paths containing ..
-elements are rejected.
+maps Dir the same way. Paths containing .. elements are rejected.
+
+Args[0] runs from that tree when it names one of the uploaded files:
+an absolute path names one directly (“go test” runs its test binaries
+by absolute path), and a relative path containing a slash, like ./prog
+or ../testprog, names one relative to Dir. A name with no slash at all
+is not an uploaded file and is looked up on the server's own PATH.
+
+A Windows server runs the command's file under a name Windows will
+run: if the file is a Windows executable (not a library) whose name
+does not already end in .exe, the server adds that suffix, since
+Windows decides what a file is by its name and a binary
+cross-compiled for Windows often arrives without one. Only the
+command's own file is renamed; the rest keep the names the test
+expects to find, testdata included.
 
 If any hashes are missing from the server's content-addressed cache,
 the server replies with a response of type Need listing them. The

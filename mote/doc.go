@@ -36,6 +36,8 @@ Assuming kremvax is an x86-64 Linux system:
 
 Mote treats the command name as a file to be uploaded when it contains a slash:
 ./helloworld is uploaded, but hostname is not.
+The name resolves to a file the way running it locally would,
+so on Windows “mote ./strings” uploads and runs ./strings.exe.
 
 # Uploading Additional Files
 

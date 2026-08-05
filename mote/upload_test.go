@@ -23,6 +23,55 @@ func TestIsFileCmd(t *testing.T) {
 	}
 }
 
+// TestCmdFile checks the resolution of a command name to the file it
+// names, including the .exe suffix of a binary built for Windows,
+// which mote supplies wherever it runs.
+func TestCmdFile(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name string) string {
+		t.Helper()
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte("binary\n"), 0o777); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	prog := write("prog")
+	data := write("data")     // not executable, but still a file to upload
+	winOnly := write("w.exe") // only the Windows name exists
+	both := write("b")        // both names exist
+	write("b.exe")
+
+	tests := []struct{ name, want string }{
+		{prog, prog},
+		{data, data},
+		// The name without the suffix means the file with it. This is
+		// what “go test -c” leaves behind when it builds for Windows:
+		// mypkg.test.exe, which “mote ./mypkg.test” must find.
+		{filepath.Join(dir, "w"), winOnly},
+		// An exact match wins: a file really named b is the one meant.
+		{both, both},
+		// A name matching nothing stands, so the upload reports it.
+		{filepath.Join(dir, "missing"), filepath.Join(dir, "missing")},
+		// A command with no path is the server's to find, and must not
+		// turn into a path on this machine.
+		{"echo", "echo"},
+	}
+	for _, tt := range tests {
+		if got := cmdFile(tt.name); got != tt.want {
+			t.Errorf("cmdFile(%q) = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+
+	// A directory is not a file to upload, with or without the suffix.
+	if err := os.Mkdir(filepath.Join(dir, "d.exe"), 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if got := cmdFile(filepath.Join(dir, "d")); got != filepath.Join(dir, "d") {
+		t.Errorf("cmdFile(d) = %q, want it unchanged", got)
+	}
+}
+
 func TestUploadList(t *testing.T) {
 	mod := t.TempDir()
 	mkfile := func(name, data string) {

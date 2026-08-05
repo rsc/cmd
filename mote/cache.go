@@ -6,6 +6,7 @@ package main
 
 import (
 	"crypto/sha256"
+	"debug/pe"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -154,4 +155,47 @@ func remotePath(tmpdir, slashPath string) (string, error) {
 	}
 	p = path.Clean("/" + p) // now absolute
 	return filepath.Join(tmpdir, filepath.FromSlash(p)), nil
+}
+
+// clientPath returns the client's path for the command name, which is
+// how the uploaded files are named: an absolute path (possibly with a
+// Windows volume) is one already, and a relative path is relative to
+// the client's directory dir. It returns "" for a name that is not a
+// path at all, which the client did not upload and the server looks up
+// on its own PATH.
+func clientPath(dir, name string) string {
+	p := strings.ReplaceAll(name, `\`, "/") // a Windows client sends native paths in Args
+	if strings.HasPrefix(p, "/") || len(p) >= 2 && p[1] == ':' {
+		return p
+	}
+	if !strings.Contains(p, "/") {
+		return ""
+	}
+	return path.Join(dir, p)
+}
+
+// exeName returns the name to store the uploaded file dst under on a
+// server running goos, given that its contents are in the file src.
+//
+// On Windows, an executable that arrives without the .exe suffix is
+// given one. Windows decides what a file is by its name, so os/exec
+// cannot run one that is named anything else, and a Go binary
+// cross-compiled for Windows often arrives this way: "go build -o
+// prog" names the file prog whatever system it is built for.
+// Everywhere else the name is left alone.
+func exeName(goos, dst, src string) string {
+	if goos != "windows" || strings.EqualFold(filepath.Ext(dst), ".exe") {
+		return dst
+	}
+	f, err := pe.Open(src)
+	if err != nil {
+		return dst // not a Windows binary at all
+	}
+	defer f.Close()
+	if f.Characteristics&pe.IMAGE_FILE_DLL != 0 {
+		// A library, not a program: it is loaded by name, so renaming
+		// it would keep whatever loads it from finding it.
+		return dst
+	}
+	return dst + ".exe"
 }

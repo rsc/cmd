@@ -210,10 +210,22 @@ func serve(rw io.ReadWriteCloser, password string, env []string) error {
 		return fail("%v", err)
 	}
 	defer os.RemoveAll(tmpdir)
+	// A command that names a path names one of the uploaded files, and
+	// what runs is that file's copy in the temporary tree: exec would
+	// resolve a relative name against Dir, but an absolute name is a
+	// path on the client ("go test" runs its test binaries by absolute
+	// path), so both are mapped the way the file itself was. On Windows
+	// the copy may also need a name that Windows will run; see exeName.
+	cmd := clientPath(req.Dir, req.Args[0])
+	name := req.Args[0]
 	for _, f := range req.Files {
 		dst, err := remotePath(tmpdir, f.Path)
 		if err != nil {
 			return fail("%v", err)
+		}
+		if f.Path == cmd {
+			dst = exeName(runtime.GOOS, dst, cacheFile(f.Hash))
+			name = dst
 		}
 		if err := copyFromCache(f.Hash, dst); err != nil {
 			return fail("%v", err)
@@ -242,21 +254,7 @@ func serve(rw io.ReadWriteCloser, password string, env []string) error {
 		return fail("unexpected request type %q", start.Type)
 	}
 
-	// Start the command. A command naming an uploaded file runs from the
-	// temporary tree: exec resolves a relative name like ./prog against
-	// Dir, but an absolute name is a path on the client, which must be
-	// mapped the same way the uploaded files were. ("go test" runs its
-	// test binaries by absolute path.)
-	name := req.Args[0]
-	slash := strings.ReplaceAll(name, `\`, "/") // a Windows client sends native paths in Args
-	for _, f := range req.Files {
-		if f.Path == slash {
-			if name, err = remotePath(tmpdir, f.Path); err != nil {
-				return fail("%v", err)
-			}
-			break
-		}
-	}
+	// Start the command, which the loop above has named.
 	c := exec.Command(name)
 	c.Args = req.Args
 	c.Dir = dir

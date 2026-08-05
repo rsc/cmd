@@ -61,6 +61,31 @@ func isFileCmd(name string) bool {
 	return strings.Contains(name, "/") || strings.Contains(name, string(filepath.Separator))
 }
 
+// cmdFile returns the file named by the command name, supplying the
+// .exe suffix that a Windows executable has and the name does not:
+// “mote ./strings” runs ./strings.exe, and “mote ./mypkg.test” runs
+// ./mypkg.test.exe, which is what “go test -c” writes when it builds
+// for Windows.
+//
+// The suffix belongs to the file, not to this machine: the binary is
+// built for Windows on whatever system cross-compiles it, so the
+// suffix is supplied wherever mote runs. An exact match always wins,
+// so a file really named strings is still the one that “mote
+// ./strings” means. A name that matches nothing is returned unchanged,
+// leaving the upload to report the file as missing.
+func cmdFile(name string) string {
+	if isFileCmd(name) && !isRegular(name) && isRegular(name+".exe") {
+		return name + ".exe"
+	}
+	return name
+}
+
+// isRegular reports whether name is an ordinary file.
+func isRegular(name string) bool {
+	info, err := os.Stat(name)
+	return err == nil && info.Mode().IsRegular()
+}
+
 // addTree adds the file or directory tree rooted at name to files.
 func addTree(files *[]*File, name string) error {
 	info, err := os.Stat(name)
