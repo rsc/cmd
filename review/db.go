@@ -745,7 +745,7 @@ func (d *DB) LastReviewedSnapshot(repo, key string, n int) (*Snapshot, error) {
 // a repository must not be named after.
 var reservedRepoNames = map[string]bool{
 	"prefs": true, "healthz": true, "favicon.ico": true,
-	"style.css": true, "keys.js": true, "htmx.min.js": true,
+	"style.css": true, "keys.js": true, "htmx.min.js": true, "favicon.svg": true,
 }
 
 // RepoName returns the short name a repository is known by in URLs,
