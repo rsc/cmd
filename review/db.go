@@ -744,7 +744,7 @@ func (d *DB) LastReviewedSnapshot(repo, key string, n int) (*Snapshot, error) {
 // reservedRepoNames are the URL path elements review uses itself, which
 // a repository must not be named after.
 var reservedRepoNames = map[string]bool{
-	"prefs": true, "healthz": true,
+	"prefs": true, "healthz": true, "favicon.ico": true,
 	"style.css": true, "keys.js": true, "htmx.min.js": true,
 }
 

@@ -6,6 +6,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -97,6 +98,10 @@ type Repo interface {
 	Pin(name, rev string) error
 }
 
+// ErrNoRepo reports that a directory is not inside a repository, which
+// callers distinguish from a repository that is there but broken.
+var ErrNoRepo = errors.New("no jj or git repository")
+
 // OpenRepo returns the repository containing dir, preferring jj when the
 // directory is in both a jj and a git repository.
 func OpenRepo(dir string) (Repo, error) {
@@ -108,7 +113,7 @@ func OpenRepo(dir string) (Repo, error) {
 		root := strings.TrimSpace(string(out))
 		return &gitRepo{root: root}, nil
 	}
-	return nil, fmt.Errorf("no jj or git repository at %s", dir)
+	return nil, fmt.Errorf("%w at %s", ErrNoRepo, dir)
 }
 
 // FileContent returns the contents of path at rev, rendering the commit
