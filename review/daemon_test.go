@@ -174,3 +174,54 @@ func TestStaleStateFile(t *testing.T) {
 		t.Error("stale state file was not cleaned up")
 	}
 }
+
+// TestOutsideRepo checks that review works from a directory that is not
+// in any repository: the server still starts, and there being nothing to
+// snapshot is not an error, it just means the top-level page.
+func TestOutsideRepo(t *testing.T) {
+	if testing.Short() {
+		t.Skip("starts a background process")
+	}
+	exe := filepath.Join(t.TempDir(), "review")
+	if out, err := run(".", "go", "build", "-o", exe, "."); err != nil {
+		t.Fatalf("building review: %v\n%s", err, out)
+	}
+	db := filepath.Join(t.TempDir(), "review.db")
+	outside := t.TempDir()
+	t.Cleanup(func() { run(outside, exe, "stop", "-db", db) })
+
+	out, err := run(outside, exe, "-db", db, "-a", "localhost:0", "-n")
+	if err != nil {
+		t.Fatalf("review outside a repository: %v\n%s", err, out)
+	}
+	st := findServer(db)
+	if st == nil {
+		t.Fatalf("no server started outside a repository:\n%s", out)
+	}
+	// It opens the page listing every repository, not a repository page.
+	if got := strings.TrimSpace(string(out)); !strings.HasSuffix(got, "http://"+st.Addr+"/") {
+		t.Errorf("review printed %q, want the top-level page", got)
+	}
+	// And says nothing about the missing repository.
+	if strings.Contains(string(out), "no jj or git repository") {
+		t.Errorf("review complained about not being in a repository:\n%s", out)
+	}
+	// The server serves that page.
+	resp, err := http.Get("http://" + st.Addr + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("GET / = %d", resp.StatusCode)
+	}
+	// A browser's unprompted request is answered without a fuss.
+	resp2, err := http.Get("http://" + st.Addr + "/favicon.ico")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusNotFound {
+		t.Errorf("GET /favicon.ico = %d, want 404", resp2.StatusCode)
+	}
+}

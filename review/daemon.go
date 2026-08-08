@@ -6,6 +6,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -162,10 +163,22 @@ func cmdServe(args []string) {
 		f.Usage()
 	}
 
-	r := open(false)
-	defer r.DB.Close()
-
 	db := dbPath()
+	d, err := OpenDB(db)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer d.Close()
+
+	// A repository under the current directory is listed even if it has
+	// never been reviewed, but review serves the database, so it runs
+	// anywhere.
+	home := ""
+	if dir, err := os.Getwd(); err == nil {
+		if repo, err := OpenRepo(dir); err == nil {
+			home = repo.Root()
+		}
+	}
 	// Leaving a state file behind would make the next run think a server
 	// is up when it is not.
 	stop := make(chan os.Signal, 1)
@@ -177,7 +190,7 @@ func cmdServe(args []string) {
 	}()
 	defer os.Remove(statePath(db))
 
-	err := serve(r, addr, func(actual string) {
+	err = serve(newServer(d, home, true), addr, func(actual string) {
 		if err := writeState(db, &serverState{Addr: actual, PID: os.Getpid()}); err != nil {
 			log.Printf("recording server state: %v", err)
 		}
@@ -213,11 +226,14 @@ func cmdOpen(args []string) {
 	// A snapshot on the way in gives the reviewer a fixed point, so that
 	// whatever the agent does next can be compared against what is being
 	// looked at now.
+	// Outside a repository there is nothing to snapshot, and the page
+	// listing every repository is the right place to land.
 	target := "http://" + st.Addr + "/"
-	if name, err := snapshotHere(db); err != nil {
-		fmt.Fprintf(stderr, "review: %v\n", err)
-	} else {
+	switch name, err := snapshotHere(db); {
+	case err == nil:
 		target += name
+	case !errors.Is(err, ErrNoRepo):
+		fmt.Fprintf(stderr, "review: %v\n", err)
 	}
 
 	if started {

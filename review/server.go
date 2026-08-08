@@ -128,22 +128,32 @@ type server struct {
 	open map[string]*Review // by repository path
 }
 
-func newServer(r *Review) *server {
+// newServer serves every repository in db. home, if not empty, is the
+// repository review was started in, which is listed even if it has never
+// been reviewed; the server runs perfectly well without one, since the
+// repositories it serves come from the database.
+func newServer(db *DB, home string, pin bool) *server {
+	user := "you"
+	if home != "" {
+		user = gitUser(home)
+	}
 	s := &server{
-		db:   r.DB,
-		home: r.Repo.Root(),
-		pin:  r.Pin,
-		user: gitUser(r.Repo.Root()),
+		db:   db,
+		home: home,
+		pin:  pin,
+		user: user,
 		mux:  http.NewServeMux(),
 		open: map[string]*Review{},
 	}
-	// The repository review was started in is always listed, even if it
-	// has never been reviewed before.
-	if name, err := s.db.RepoName(s.home); err == nil {
-		r.Name = name
-		s.open[s.home] = r
+	if home != "" {
+		if _, err := s.db.RepoName(home); err != nil {
+			log.Printf("naming %s: %v", home, err)
+		}
 	}
 
+	// Browsers ask for this unprompted; answering it here keeps it out of
+	// the log as an unknown repository.
+	s.mux.HandleFunc("GET /favicon.ico", http.NotFound)
 	s.mux.HandleFunc("GET "+healthPath, func(w http.ResponseWriter, req *http.Request) {
 		fmt.Fprint(w, healthBody)
 	})
@@ -250,7 +260,7 @@ func (s *server) repoPaths() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !slices.Contains(paths, s.home) {
+	if s.home != "" && !slices.Contains(paths, s.home) {
 		paths = append(paths, s.home)
 	}
 	slices.Sort(paths)
@@ -1363,7 +1373,7 @@ func inSpans(spans []Span, i int) bool {
 // serve runs the web interface until it fails. ready, if not nil, is
 // called with the address actually listened on, which differs from the
 // one asked for when that was busy.
-func serve(r *Review, addr string, ready func(string)) error {
+func serve(s *server, addr string, ready func(string)) error {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		// Fall back to any free port rather than refusing to start.
@@ -1375,7 +1385,7 @@ func serve(r *Review, addr string, ready func(string)) error {
 	if ready != nil {
 		ready(ln.Addr().String())
 	}
-	return http.Serve(ln, protect(newServer(r)))
+	return http.Serve(ln, protect(s))
 }
 
 // protect wraps the server in Go's cross-origin protection. The server

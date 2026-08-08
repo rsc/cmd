@@ -28,7 +28,7 @@ func newTestServer(t *testing.T) (*server, *Review, string) {
 	write(t, dir, "a.go", "package main\n\nfunc main() {\n\tprintln(\"hi\")\n}\n")
 	do(t, dir, "git", "add", ".")
 	do(t, dir, "git", "commit", "-q", "-m", "add a.go\n\nChange-Id: Itest1\n")
-	return newServer(r), r, dir
+	return newServer(r.DB, r.Root(), r.Pin), r, dir
 }
 
 // repoURL turns a repository-relative path into a request path, since
