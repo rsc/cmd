@@ -1,0 +1,45 @@
+{{template "head" .}}
+<main class="changes">
+  <div id="viewinfo" hidden data-repo="{{.Repo}}"></div>
+  <div class="pagehead">
+    <h1>{{.Repo}}</h1>
+    <form method="post" action="{{.RepoURL}}/snapshot">
+      <input type="hidden" name="return" value="{{.RepoURL}}">
+      <button type="submit" title="Record a snapshot of every change (G)">Snapshot all</button>
+    </form>
+  </div>
+
+  {{if not .Changes}}
+    <p class="empty">Nothing to review: no mutable commits and no uncommitted changes.</p>
+  {{end}}
+
+  <table class="changelist">
+    <tbody>
+      {{range .Changes}}
+      <tr class="item" data-href="{{.URL}}" data-key="{{.Key}}"
+          data-filter="{{.Subject}} {{.Author}} {{.ShortRev}}">
+        <td class="pick">{{if not .Working}}<input type="checkbox" class="pickbox" aria-label="select">{{end}}</td>
+        <td class="subject">
+          <a href="{{.URL}}">{{.Subject}}</a>
+          {{if .Working}}<span class="chip working">uncommitted</span>{{end}}
+          {{if .Current}}<span class="chip current">working copy</span>{{end}}
+        </td>
+        <td class="snaps">
+          {{if .Snapshots}}<span class="chip snap">{{.Snapshots}} snapshot{{if ne .Snapshots 1}}s{{end}}</span>{{end}}
+          {{if .Reviewed}}<span class="chip reviewedchip" title="the newest snapshot is marked reviewed">✓ reviewed</span>{{end}}
+          {{if .LGTM}}<span class="chip lgtmchip" title="the newest snapshot is marked LGTM">✓ LGTM</span>{{end}}
+        </td>
+        <td class="counts">
+          {{if .Comments}}<span class="chip">{{.Comments}} comment{{if ne .Comments 1}}s{{end}}</span>{{end}}
+          {{if .Unresolved}}<span class="chip unresolved">{{.Unresolved}} unresolved</span>{{end}}
+          {{if .Drafts}}<span class="chip draftchip">{{.Drafts}} draft</span>{{end}}
+        </td>
+        <td class="rev"><code>{{.ShortRev}}</code></td>
+        <td class="author">{{.Author}}</td>
+        <td class="when">{{since .Date}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</main>
+{{template "foot" .}}

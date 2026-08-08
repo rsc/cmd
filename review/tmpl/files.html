@@ -1,0 +1,75 @@
+{{template "head" .}}
+<main class="files">
+  <div id="viewinfo" hidden data-repo="{{.Repo}}" data-key="{{.Key}}" data-base="{{.BaseN}}" data-target="{{.TargetN}}" data-latest="{{.LatestN}}" data-file="{{.FileParam}}"></div>
+  <div class="pagehead">
+    <div>
+      <h1>{{.Change.Subject}}</h1>
+      <div class="byline">{{.Change.Author}} · <code>{{.Change.ShortRev}}</code> · {{since .Change.Date}}</div>
+    </div>
+    <div class="pageactions">
+      {{if .Drafts}}
+      <form method="post" action="{{.RepoURL}}/publish">
+        <input type="hidden" name="key" value="{{.Key}}">
+        <input type="hidden" name="return" value="{{.SelfURL}}">
+        <button type="submit" class="primary" title="Publish drafts (a)">Publish {{.Drafts}} draft{{if ne .Drafts 1}}s{{end}}</button>
+      </form>
+      {{end}}
+      {{if .CanComment}}{{template "lgtmbutton" lgtmArg .Repo .Target.ID .LGTM}}{{end}}
+      {{if not .Change.Working}}
+      <form method="post" action="{{.RepoURL}}/snapshot">
+        <input type="hidden" name="key" value="{{.Key}}">
+        <input type="hidden" name="return" value="{{.SelfURL}}">
+        <button type="submit" title="Record a snapshot (G)">Snapshot</button>
+      </form>
+      {{end}}
+    </div>
+  </div>
+
+  {{template "baseselect" .}}
+
+  {{if .Snapshots}}
+  <ol class="timeline">
+    {{range .Snapshots}}
+    <li class="{{if eq $.TargetN .N}}sel{{end}}">
+      <a href="{{$.PageURL}}?s={{.N}}">Snapshot {{.N}}</a>
+      <code>{{.ShortRev}}</code>
+      <span class="when">{{since .Created}}</span>
+      <span class="subject">{{.Subject}}</span>
+      <span class="snapreviewed">{{template "reviewedbutton" snapshotArg $.Repo .ID (index $.Reviewed .ID)}}</span>
+    </li>
+    {{end}}
+  </ol>
+  {{end}}
+
+  <table class="filelist">
+    <tbody>
+      {{range .Files}}
+      <tr class="item filerow" data-href="{{.URL}}" data-file="{{.Path}}"
+          data-comments="{{.Comments}}" data-filter="{{.Path}}">
+        <td class="status status-{{printf "%c" .Status}}">{{printf "%c" .Status}}</td>
+        <td class="name"><a href="{{.URL}}">{{.Name}}</a></td>
+        <td class="counts">
+          {{if .Comments}}<span class="chip">{{.Comments}} comment{{if ne .Comments 1}}s{{end}}</span>{{end}}
+          {{if .Unresolved}}<span class="chip unresolved">{{.Unresolved}} unresolved</span>{{end}}
+        </td>
+        <td class="reviewedcell">
+          {{if $.CanComment}}{{template "reviewedbutton" reviewedArg $.Repo $.Target.ID .Path .Reviewed}}{{end}}
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+
+  {{if .Threads}}
+  <section class="history">
+    <h2>Comments</h2>
+    <div class="historysummary">
+      {{.Comments}} comment{{if ne .Comments 1}}s{{end}}
+      {{if .Unresolved}}<span class="chip unresolved">{{.Unresolved}} unresolved</span>{{end}}
+      {{if .Drafts}}<span class="chip draftchip">{{.Drafts}} draft</span>{{end}}
+    </div>
+    {{range .Threads}}{{template "thread" .}}{{end}}
+  </section>
+  {{end}}
+</main>
+{{template "foot" .}}

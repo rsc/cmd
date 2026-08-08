@@ -1,0 +1,522 @@
+/* Copyright 2026 The Go Authors. All rights reserved.
+ * Use of this source code is governed by a BSD-style
+ * license that can be found in the LICENSE file. */
+
+/* The diff colors are Gerrit's, copied exactly from
+ * polygerrit-ui/app/styles/themes/app-theme.ts, because they are chosen
+ * to stay legible for color-blind readers. Gerrit's rule: the light color
+ * fills the whole changed line, and the dark color marks the part of the
+ * line that actually changed. A chunk that only adds or only removes has
+ * no intraline information to show, so the dark color fills those lines. */
+
+:root {
+	/* diff colors */
+	--dark-add-highlight-color: #aaf2aa;
+	--light-add-highlight-color: #d8fed8;
+	--dark-remove-highlight-color: #ffcdd2;
+	--light-remove-highlight-color: #ffebee;
+	--diff-context-control-background-color: #fff7d4;
+	--diff-context-control-border-color: #f6e6a5;
+	--diff-selection-background-color: #c7dbf9;
+	--diff-highlight-range-color: rgba(255, 220, 0, 0.5);
+	--diff-trailing-whitespace-indicator: #ff9ad2;
+	--token-highlighting-color: #fffd54;
+	--focused-line-outline-color: #1967d2;
+	--diff-blank-background-color: #f8f9fa;
+
+	/* palette */
+	--gerrit-blue-light: #1565c0;
+	--blue-50: #e8f0fe;
+	--blue-700: #1967d2;
+	--gray-50: #f8f9fa;
+	--gray-100: #f1f3f4;
+	--gray-200: #e8eaed;
+	--gray-300: #dadce0;
+	--gray-500: #9aa0a6;
+	--gray-700: #5f6368;
+	--gray-800: #3c4043;
+	--gray-900: #202124;
+	--orange-50: #feefe3;
+	--orange-900: #b06000;
+	--green-50: #e6f4ea;
+	--green-700: #188038;
+	--green-800: #137333;
+	--red-50: #fce8e6;
+	--red-700: #c5221f;
+	--purple-50: #f3e8fd;
+	--purple-900: #681da8;
+
+	--font: Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+	--mono: "Roboto Mono", "SF Mono", Menlo, Consolas, monospace;
+	--border: 1px solid var(--gray-300);
+}
+
+* { box-sizing: border-box; }
+
+body {
+	margin: 0;
+	font-family: var(--font);
+	font-size: 13px;
+	color: var(--gray-900);
+	background: #fff;
+}
+
+a { color: var(--gerrit-blue-light); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code { font-family: var(--mono); font-size: 12px; color: var(--gray-700); }
+h1 { font-size: 18px; font-weight: 500; margin: 0; }
+h2 { font-size: 16px; font-weight: 500; margin: 0 0 12px; }
+h3 { font-size: 13px; font-weight: 500; margin: 0 0 6px; color: var(--gray-700); }
+
+/* ---- top bar ---- */
+
+.topbar {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 8px 16px;
+	border-bottom: var(--border);
+	background: var(--gray-50);
+	position: sticky;
+	top: 0;
+	z-index: 10;
+}
+.topbar .logo { font-weight: 500; color: var(--gray-900); }
+.topbar .repo { color: var(--gray-700); }
+.topbar .spacer { flex: 1; }
+.search {
+	font-family: var(--font);
+	font-size: 13px;
+	padding: 4px 8px;
+	border: var(--border);
+	border-radius: 4px;
+	width: 220px;
+}
+.linkish {
+	border: var(--border);
+	background: #fff;
+	border-radius: 4px;
+	cursor: pointer;
+	padding: 3px 9px;
+	font-family: var(--font);
+}
+
+/* ---- page furniture ---- */
+
+main { padding: 16px; }
+
+.pagehead {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 16px;
+	margin-bottom: 12px;
+}
+.pageactions { display: flex; gap: 8px; align-items: center; }
+.byline { color: var(--gray-700); margin-top: 3px; }
+.empty, .note { color: var(--gray-700); padding: 12px 0; }
+.note {
+	background: var(--orange-50);
+	color: var(--orange-900);
+	padding: 8px 12px;
+	border-radius: 4px;
+	margin: 8px 0;
+}
+
+button {
+	font-family: var(--font);
+	font-size: 13px;
+	padding: 5px 12px;
+	border: var(--border);
+	border-radius: 4px;
+	background: #fff;
+	color: var(--gerrit-blue-light);
+	cursor: pointer;
+}
+button:hover { background: var(--gray-100); }
+button.primary {
+	background: var(--gerrit-blue-light);
+	color: #fff;
+	border-color: var(--gerrit-blue-light);
+}
+button.primary:hover { background: #0d47a1; }
+
+/* ---- chips ---- */
+
+.chip {
+	display: inline-block;
+	padding: 1px 7px;
+	border-radius: 9px;
+	font-size: 11px;
+	line-height: 16px;
+	vertical-align: 1px;
+	background: var(--gray-100);
+	color: var(--gray-800);
+	white-space: nowrap;
+}
+.chip.unresolved { background: var(--red-50); color: var(--red-700); }
+.chip.done { background: var(--green-50); color: var(--green-700); }
+.chip.draftchip { background: var(--orange-50); color: var(--orange-900); }
+.chip.agentchip { background: var(--blue-50); color: var(--blue-700); }
+.chip.working, .chip.current { background: var(--purple-50); color: var(--purple-900); }
+.chip.stalechip { background: var(--orange-50); color: var(--orange-900); }
+.chip.kind { background: var(--gray-200); color: var(--gray-700); }
+.chip.reviewedchip { background: var(--green-700); color: #fff; font-weight: 500; }
+.chip.lgtmchip { background: var(--blue-700); color: #fff; font-weight: 500; }
+
+/* ---- lists ---- */
+
+table.changelist, table.filelist {
+	width: 100%;
+	border-collapse: collapse;
+}
+table.changelist td, table.filelist td {
+	padding: 6px 8px;
+	border-bottom: var(--border);
+	vertical-align: top;
+}
+tr.item.cursor > td { background: var(--blue-50); }
+tr.item.cursor > td:first-child { box-shadow: inset 3px 0 0 var(--focused-line-outline-color); }
+tr.item:hover > td { background: var(--gray-50); }
+.changelist .subject a, .filelist .name a { color: var(--gray-900); font-weight: 500; }
+.changelist .author, .changelist .when { color: var(--gray-700); }
+.filelist .counts, .changelist .counts { color: var(--gray-700); white-space: nowrap; }
+.filelist .counts .chip + .chip,
+.changelist .counts .chip + .chip { margin-left: 6px; }
+.changelist .pick { width: 24px; }
+.changelist .repo { white-space: nowrap; }
+.changelist .repo a { color: var(--gray-700); font-family: var(--mono); font-size: 12px; }
+
+.topbar .sep { color: var(--gray-500); }
+.topbar a.repo { color: var(--gray-900); }
+
+.repolist { margin-top: 28px; border-top: var(--border); padding-top: 12px; }
+.repolist ul { list-style: none; margin: 0; padding: 0; }
+.repolist li { display: flex; gap: 10px; align-items: baseline; padding: 3px 0; }
+.repolist .path { color: var(--gray-500); font-family: var(--mono); font-size: 11px; }
+.filelist .status { width: 20px; font-family: var(--mono); color: var(--gray-700); }
+.filelist .status-A { color: var(--green-700); }
+.filelist .status-D { color: var(--red-700); }
+.filelist .reviewedcell { width: 120px; text-align: right; }
+/* The reviewed button is its own indicator: off it is a quiet outline,
+ * on it lights up solid green and stays that way. */
+button.reviewed {
+	font-size: 11px;
+	padding: 2px 9px;
+	color: var(--gray-700);
+	border-color: var(--gray-300);
+}
+button.reviewed:hover { background: var(--green-50); color: var(--green-700); border-color: var(--green-700); }
+button.reviewed.on {
+	background: var(--green-700);
+	color: #fff;
+	border-color: var(--green-700);
+	font-weight: 500;
+}
+button.reviewed.on:hover { background: var(--green-800); color: #fff; }
+/* LGTM is a verdict rather than progress, so it lights up blue. */
+button.reviewed.lgtm { font-size: 13px; padding: 5px 12px; color: var(--gerrit-blue-light); border-color: var(--gray-300); }
+button.reviewed.lgtm:hover { background: var(--blue-50); color: var(--blue-700); border-color: var(--blue-700); }
+button.reviewed.lgtm.on { background: var(--blue-700); border-color: var(--blue-700); color: #fff; }
+button.reviewed.lgtm.on:hover { background: var(--gerrit-blue-light); }
+
+/* ---- base selector and snapshot timeline ---- */
+
+.baseselect {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 12px;
+	background: var(--gray-50);
+	border: var(--border);
+	border-radius: 4px;
+	margin-bottom: 12px;
+}
+.baseselect select { font-family: var(--font); font-size: 13px; padding: 3px 6px; }
+.baseselect .arrow { color: var(--gray-700); }
+
+.timeline { list-style: none; margin: 0 0 16px; padding: 0; }
+.timeline li {
+	display: flex;
+	gap: 10px;
+	align-items: center;
+	padding: 4px 8px;
+	border-left: 3px solid var(--gray-300);
+}
+.timeline li.sel { border-left-color: var(--focused-line-outline-color); background: var(--blue-50); }
+.timeline .when, .timeline .subject { color: var(--gray-700); }
+.timeline .snapreviewed { margin-left: auto; }
+
+.autobase {
+	color: var(--gray-700);
+	font-style: italic;
+	margin-left: auto;
+}
+
+.filenav {
+	display: flex;
+	justify-content: space-between;
+	gap: 16px;
+	padding: 6px 0 12px;
+}
+
+/* ---- diff table ---- */
+
+table.diff {
+	width: 100%;
+	border-collapse: collapse;
+	table-layout: fixed;
+	font-family: var(--mono);
+	font-size: 12px;
+	line-height: 18px;
+	border: var(--border);
+}
+col.numcol { width: 6ch; }
+table.diff td { padding: 0; vertical-align: top; }
+
+td.num {
+	text-align: right;
+	color: var(--gray-500);
+	background: var(--gray-50);
+	border-right: var(--border);
+	user-select: none;
+	width: 6ch;
+}
+td.num .linenum {
+	display: block;
+	width: 100%;
+	border: 0;
+	background: none;
+	color: var(--gray-500);
+	font-family: var(--mono);
+	font-size: 12px;
+	line-height: 18px;
+	padding: 0 6px 0 0;
+	text-align: right;
+	border-radius: 0;
+}
+td.num button.linenum { cursor: pointer; }
+td.num button.linenum:hover { background: var(--blue-50); color: var(--blue-700); }
+
+td.code .text {
+	white-space: pre-wrap;
+	/* break-all, not break-word: a long token should fill out the rest of
+	 * the line and continue on the next, rather than moving whole and
+	 * leaving the first line short. */
+	word-break: break-all;
+	padding: 0 6px;
+	min-height: 18px;
+}
+td.code:not(.add):not(.remove) { background: #fff; }
+/* A cell with no line on this side is blank, not empty content. */
+tr.diffrow.insert td.num:first-child,
+tr.diffrow.insert td.code:nth-child(2),
+tr.diffrow.delete td.num:nth-child(3),
+tr.diffrow.delete td.code:nth-child(4) {
+	background: var(--diff-blank-background-color);
+}
+
+/* Gerrit's rule, exactly: pale background for the line, strong background
+ * for the changed part of it, and strong background for the whole line
+ * when there is no intraline information to show. */
+td.code.add .text { background: var(--light-add-highlight-color); }
+td.code.add .text .i { background: var(--dark-add-highlight-color); }
+td.code.add.total .text,
+td.code.add.nointra .text { background: var(--dark-add-highlight-color); }
+
+td.code.remove .text { background: var(--light-remove-highlight-color); }
+td.code.remove .text .i { background: var(--dark-remove-highlight-color); }
+td.code.remove.total .text,
+td.code.remove.nointra .text { background: var(--dark-remove-highlight-color); }
+
+.text .ws { background: var(--diff-trailing-whitespace-indicator); }
+
+tr.diffrow.cursor td { box-shadow: inset 0 -1px 0 var(--focused-line-outline-color), inset 0 1px 0 var(--focused-line-outline-color); }
+tr.diffrow.cursor td.num:first-child { box-shadow: inset 3px 0 0 var(--focused-line-outline-color), inset 0 -1px 0 var(--focused-line-outline-color), inset 0 1px 0 var(--focused-line-outline-color); }
+
+::selection { background: var(--diff-selection-background-color); }
+
+/* Context control, styled as Gerrit's yellow band. */
+tr.skiprow td.skipcell {
+	background: var(--diff-context-control-background-color);
+	border-top: 1px solid var(--diff-context-control-border-color);
+	border-bottom: 1px solid var(--diff-context-control-border-color);
+	text-align: center;
+	padding: 2px;
+}
+button.expand {
+	background: none;
+	border: 0;
+	color: var(--gray-700);
+	font-family: var(--font);
+	font-size: 12px;
+}
+button.expand:hover { text-decoration: underline; background: none; }
+
+/* With the left pane hidden its columns are squeezed to nothing (keys.js
+ * zeroes their widths) and their contents hidden, so the right code
+ * column takes the whole table rather than staying half wide. */
+body.hideleft table.diff td.num:first-child,
+body.hideleft table.diff td.code:nth-child(2) {
+	padding: 0;
+	border-right: 0;
+	background: none;
+}
+body.hideleft table.diff td.num:first-child > *,
+body.hideleft table.diff td.code:nth-child(2) > * { display: none; }
+body.hideleft table.diff tr.threadrow td.threadcell:first-child { display: none; }
+body.hidethreads tr.threadrow { display: none; }
+
+/* ---- comment threads ---- */
+
+tr.threadrow td.threadcell {
+	padding: 6px;
+	background: var(--gray-50);
+	border-top: var(--border);
+	border-bottom: var(--border);
+	vertical-align: top;
+}
+
+.thread {
+	font-family: var(--font);
+	font-size: 13px;
+	background: #fff;
+	border: var(--border);
+	border-radius: 4px;
+	padding: 8px;
+	margin-bottom: 6px;
+	max-width: 70em;
+}
+.thread.focused { border-color: var(--focused-line-outline-color); box-shadow: 0 0 0 1px var(--focused-line-outline-color); }
+.thread.resolved { background: var(--gray-50); }
+.thread.stale { border-left: 3px solid var(--orange-900); }
+.thread.collapsed .comments, .thread.collapsed .threadactions { display: none; }
+
+.threadhead { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+.threadhead .where { color: var(--gray-500); font-family: var(--mono); font-size: 11px; margin-left: auto; }
+
+.comment { padding: 6px 0; border-top: 1px solid var(--gray-200); }
+.comment:first-child { border-top: 0; }
+.comment .chead { display: flex; gap: 6px; align-items: center; margin-bottom: 3px; }
+.comment .author { font-weight: 500; }
+.comment .when { color: var(--gray-500); font-size: 11px; }
+.comment .body { white-space: pre-wrap; word-break: break-word; }
+
+/* Agent replies are visually distinct from the reviewer's own comments,
+ * which is the point of tagging them. */
+.comment.agent {
+	border-left: 3px solid var(--gerrit-blue-light);
+	padding-left: 8px;
+	background: var(--blue-50);
+	border-radius: 0 4px 4px 0;
+}
+.comment.draft { background: var(--orange-50); border-radius: 4px; padding-left: 8px; }
+
+.draftactions { margin-left: auto; display: flex; gap: 4px; }
+.linkish.small {
+	font-size: 11px;
+	padding: 0 6px;
+	border: 0;
+	background: none;
+	color: var(--gerrit-blue-light);
+}
+.linkish.small:hover { text-decoration: underline; background: none; }
+.linkish.small.danger { color: var(--red-700); }
+
+.threadactions { display: flex; gap: 6px; margin-top: 6px; }
+.threadactions button { font-size: 12px; padding: 3px 9px; }
+
+.commentform, .replyform { font-family: var(--font); }
+.commentform textarea, .replyform textarea {
+	width: 100%;
+	font-family: var(--font);
+	font-size: 13px;
+	padding: 6px;
+	border: var(--border);
+	border-radius: 4px;
+	resize: vertical;
+}
+.formactions { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
+.resolvebox { color: var(--gray-700); }
+
+/* ---- comment history on the change page ---- */
+
+.history {
+	margin: 24px 0 20px;
+	padding: 12px 0 4px;
+	border-top: var(--border);
+}
+.history h2 { margin-bottom: 4px; }
+.historysummary {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+	color: var(--gray-700);
+	margin-bottom: 10px;
+}
+/* Away from the diff, a thread is read on its own, so it gets more room
+ * and its location is a link back to the line it is attached to. */
+.history .thread { max-width: 60em; margin-bottom: 8px; }
+.history .thread .where { font-family: var(--font); font-size: 12px; }
+
+.stalebox {
+	border: 1px solid var(--diff-context-control-border-color);
+	background: var(--diff-context-control-background-color);
+	border-radius: 4px;
+	padding: 10px;
+	margin-bottom: 12px;
+}
+
+tr.inlinerow > td { padding: 0 0 8px 28px; background: #fff; }
+
+/* The bar that appears when n or p runs off the end of a diff, telling
+ * you that pressing it again moves to the next or previous file. */
+#navbar {
+	position: fixed;
+	left: 16px;
+	bottom: 16px;
+	z-index: 20;
+	background: var(--gray-900);
+	color: #fff;
+	padding: 10px 16px;
+	border-radius: 4px;
+	box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
+	font-size: 13px;
+}
+#navbar[hidden] { display: none; }
+
+/* ---- dialogs ---- */
+
+dialog {
+	border: var(--border);
+	border-radius: 8px;
+	padding: 20px;
+	max-width: 900px;
+	max-height: 85vh;
+	overflow: auto;
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+dialog::backdrop { background: rgba(0, 0, 0, 0.32); }
+
+.helpcols { columns: 2; column-gap: 32px; }
+.helpbox section { break-inside: avoid; margin-bottom: 14px; }
+.helpbox table { border-collapse: collapse; width: 100%; }
+.helpbox td { padding: 2px 8px 2px 0; vertical-align: top; }
+.helpbox td.keys { white-space: nowrap; text-align: right; width: 12em; }
+.helpbox td.desc { color: var(--gray-800); }
+.helpbox .or { color: var(--gray-500); font-size: 11px; }
+.dismiss { color: var(--gray-700); margin: 12px 0 0; }
+
+kbd {
+	font-family: var(--mono);
+	font-size: 11px;
+	background: var(--gray-100);
+	border: 1px solid var(--gray-300);
+	border-bottom-width: 2px;
+	border-radius: 3px;
+	padding: 1px 5px;
+}
+
+.prefsbox { display: flex; flex-direction: column; gap: 10px; min-width: 260px; }
+.prefsbox label { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.prefsbox input[type="number"] { width: 6em; padding: 3px 6px; }

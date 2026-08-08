@@ -1,0 +1,193 @@
+{{define "baseselect"}}
+<form class="baseselect" method="get" action="{{.PageURL}}">
+  <label>Base
+    <select name="base" onchange="this.form.submit()">
+      <option value="parent" {{if eq .BaseN 0}}selected{{end}}>Parent</option>
+      {{range .Snapshots}}{{if lt .N $.TargetN}}
+      <option value="{{.N}}" {{if eq $.BaseN .N}}selected{{end}}>Snapshot {{.N}}</option>
+      {{end}}{{end}}
+    </select>
+  </label>
+  <span class="arrow">→</span>
+  <label>
+    <select name="s" onchange="this.form.submit()">
+      {{if not .Snapshots}}<option value="">Working tree</option>{{end}}
+      {{range .Snapshots}}
+      <option value="{{.N}}" {{if eq $.TargetN .N}}selected{{end}}>Snapshot {{.N}}</option>
+      {{end}}
+    </select>
+  </label>
+  {{if .FileParam}}<input type="hidden" name="f" value="{{.FileParam}}">{{end}}
+  {{if .AutoBase}}
+  <span class="autobase" title="Snapshot {{.BaseN}} is the most recent one you marked reviewed">
+    showing changes since you last reviewed
+  </span>
+  {{end}}
+</form>
+{{end}}
+
+{{define "rows"}}
+{{$p := .}}
+{{range .Rows}}
+  {{if eq .Class "skip"}}
+  <tr class="skiprow">
+    <td class="skipcell" colspan="{{$p.Cols}}">
+      <button class="expand" hx-get="{{.ExpandURL}}" hx-target="closest tr" hx-swap="outerHTML">
+        Expand {{.Count}} unchanged line{{if ne .Count 1}}s{{end}}
+      </button>
+    </td>
+  </tr>
+  {{else}}
+  <tr class="diffrow {{.Class}}" data-l="{{.L.Num}}" data-r="{{.R.Num}}">
+    {{if not $p.Unified}}
+    <td class="num {{.LeftClass}}">
+      {{if and .L.Num $p.CanComment}}<button class="linenum" hx-get="{{.LeftFormURL}}" hx-target="closest tr" hx-swap="afterend">{{.L.Num}}</button>
+      {{else if .L.Num}}<span class="linenum">{{.L.Num}}</span>{{end}}
+    </td>
+    <td class="code {{.LeftClass}}"><div class="text">{{.LeftHTML}}</div></td>
+    {{end}}
+    <td class="num {{if $p.Unified}}{{.LeftClass}}{{.RightClass}}{{else}}{{.RightClass}}{{end}}">
+      {{if $p.Unified}}
+        {{if and .L.Num $p.CanComment}}<button class="linenum" hx-get="{{.LeftFormURL}}" hx-target="closest tr" hx-swap="afterend">{{.L.Num}}</button>
+        {{else if and .R.Num $p.CanComment}}<button class="linenum" hx-get="{{.RightFormURL}}" hx-target="closest tr" hx-swap="afterend">{{.R.Num}}</button>
+        {{else if .L.Num}}<span class="linenum">{{.L.Num}}</span>
+        {{else if .R.Num}}<span class="linenum">{{.R.Num}}</span>{{end}}
+      {{else}}
+        {{if and .R.Num $p.CanComment}}<button class="linenum" hx-get="{{.RightFormURL}}" hx-target="closest tr" hx-swap="afterend">{{.R.Num}}</button>
+        {{else if .R.Num}}<span class="linenum">{{.R.Num}}</span>{{end}}
+      {{end}}
+    </td>
+    <td class="code {{if $p.Unified}}{{.LeftClass}}{{.RightClass}}{{else}}{{.RightClass}}{{end}}">
+      <div class="text">{{if $p.Unified}}{{if .L.Num}}{{.LeftHTML}}{{else}}{{.RightHTML}}{{end}}{{else}}{{.RightHTML}}{{end}}</div>
+    </td>
+  </tr>
+  {{if or .LeftThreads .RightThreads}}
+  <tr class="threadrow">
+    {{if not $p.Unified}}
+    <td class="threadcell" colspan="2">{{range .LeftThreads}}{{template "thread" threadArg . $p.Repo $p.User}}{{end}}</td>
+    {{end}}
+    <td class="threadcell" colspan="2">
+      {{if $p.Unified}}{{range .LeftThreads}}{{template "thread" threadArg . $p.Repo $p.User}}{{end}}{{end}}
+      {{range .RightThreads}}{{template "thread" threadArg . $p.Repo $p.User}}{{end}}
+    </td>
+  </tr>
+  {{end}}
+  {{end}}
+{{end}}
+{{end}}
+
+{{define "thread"}}
+<div class="thread{{if .Thread.Resolved}} resolved{{end}}{{if .Thread.Other}} other{{end}}{{if .Thread.Stale}} stale{{end}}"
+     id="thread-{{.Thread.ID}}" data-thread="{{.Thread.ID}}">
+  <div class="threadhead">
+    {{if .Thread.Other}}<span class="chip snap" title="written against an earlier snapshot">snapshot {{.Thread.SnapshotN}}</span>{{end}}
+    {{if .Thread.Stale}}<span class="chip stalechip" title="the line this was attached to is gone">stale</span>{{end}}
+    {{if .Thread.Resolved}}<span class="chip done">resolved</span>{{end}}
+    <span class="where">
+      {{if .Link}}<a href="{{.Link}}">{{.Thread.Where}}</a>{{else}}{{.Thread.Where}}{{end}}
+    </span>
+  </div>
+  <div class="comments">
+    {{range .Thread.Comments}}
+    <div class="comment{{if .FromAgent}} agent{{end}}{{if .Draft}} draft{{end}}" id="comment-{{.ID}}">
+      <div class="chead">
+        <span class="author">{{.Author}}</span>
+        {{if .FromAgent}}<span class="chip agentchip">agent</span>{{end}}
+        {{if .Draft}}<span class="chip draftchip">draft</span>{{end}}
+        <span class="when">{{since .Created}}</span>
+        {{if .Draft}}
+        <span class="draftactions">
+          <button class="linkish small" hx-get="/{{$.Repo}}/f/editform?comment={{.ID}}"
+                  hx-target="closest .comment" hx-swap="outerHTML">Edit</button>
+          <button class="linkish small danger" hx-post="/{{$.Repo}}/f/delete?comment={{.ID}}"
+                  hx-target="closest .thread" hx-swap="outerHTML"
+                  hx-confirm="Delete this draft comment?">Delete</button>
+        </span>
+        {{end}}
+      </div>
+      <div class="body">{{.Body}}</div>
+    </div>
+    {{end}}
+  </div>
+  <div class="threadactions">
+    <button class="reply" hx-get="/{{.Repo}}/f/form?thread={{.Thread.ID}}" hx-target="closest .thread" hx-swap="beforeend">Reply</button>
+    <button class="resolve" hx-post="/{{.Repo}}/f/resolve?thread={{.Thread.ID}}" hx-target="closest .thread" hx-swap="outerHTML">
+      {{if .Thread.Resolved}}Unresolve{{else}}Resolve{{end}}
+    </button>
+  </div>
+</div>
+{{end}}
+
+{{define "lgtmbutton"}}
+<button class="reviewed lgtm{{if .Reviewed}} on{{end}}" hx-post="{{.URL}}" hx-target="this" hx-swap="outerHTML">
+  {{if .Reviewed}}✓ LGTM{{else}}LGTM{{end}}
+</button>
+{{end}}
+
+{{define "editform"}}
+<form class="commentform editform" hx-post="/{{.Repo}}/f/edit?comment={{.Comment.ID}}"
+      hx-target="closest .thread" hx-swap="outerHTML">
+  <textarea name="body" rows="3" autofocus>{{.Comment.Body}}</textarea>
+  <div class="formactions">
+    <button type="submit" class="primary">Save</button>
+    <button type="button" hx-get="/{{.Repo}}/f/thread?thread={{.Comment.ThreadID}}"
+            hx-target="closest .thread" hx-swap="outerHTML">Cancel</button>
+  </div>
+</form>
+{{end}}
+
+{{define "replyform"}}
+<form class="replyform" hx-post="/{{.Repo}}/f/comment?thread={{.Thread.ID}}" hx-target="closest .thread" hx-swap="outerHTML">
+  <textarea name="body" rows="3" placeholder="Reply…" autofocus></textarea>
+  <div class="formactions">
+    <button type="submit" class="primary">Save</button>
+    <label class="resolvebox"><input type="checkbox" name="resolve" value="1"> Resolve</label>
+    <button type="button" onclick="this.closest('form').remove()">Cancel</button>
+  </div>
+</form>
+{{end}}
+
+{{define "commentrow"}}
+<tr class="threadrow formrow">
+  {{if not .Unified}}
+  <td class="threadcell" colspan="2">{{if eq .Side "old"}}{{template "newform" .}}{{end}}</td>
+  <td class="threadcell" colspan="2">{{if eq .Side "new"}}{{template "newform" .}}{{end}}</td>
+  {{else}}
+  <td class="threadcell" colspan="2">{{template "newform" .}}</td>
+  {{end}}
+</tr>
+{{end}}
+
+{{define "newform"}}
+<form class="commentform" hx-post="/{{.Repo}}/f/comment" hx-target="closest tr" hx-swap="outerHTML">
+  <input type="hidden" name="key" value="{{.Key}}">
+  <input type="hidden" name="base" value="{{.Base}}">
+  <input type="hidden" name="s" value="{{.Target}}">
+  <input type="hidden" name="f" value="{{.File}}">
+  <input type="hidden" name="side" value="{{.Side}}">
+  <input type="hidden" name="line" value="{{.Line}}">
+  <input type="hidden" name="unified" value="{{if .Unified}}1{{else}}0{{end}}">
+  <textarea name="body" rows="3" placeholder="Comment on line {{.Line}}…" autofocus></textarea>
+  <div class="formactions">
+    <button type="submit" class="primary">Save</button>
+    <button type="button" onclick="this.closest('tr').remove()">Cancel</button>
+  </div>
+</form>
+{{end}}
+
+{{define "threadrow"}}
+<tr class="threadrow">
+  {{if not .Unified}}
+  <td class="threadcell" colspan="2">{{if eq .Side "old"}}{{template "thread" .}}{{end}}</td>
+  <td class="threadcell" colspan="2">{{if eq .Side "new"}}{{template "thread" .}}{{end}}</td>
+  {{else}}
+  <td class="threadcell" colspan="2">{{template "thread" .}}</td>
+  {{end}}
+</tr>
+{{end}}
+
+{{define "reviewedbutton"}}
+<button class="reviewed{{if .Reviewed}} on{{end}}" hx-post="{{.URL}}" hx-target="this" hx-swap="outerHTML">
+  {{if .Reviewed}}✓ reviewed{{else}}mark reviewed{{end}}
+</button>
+{{end}}
