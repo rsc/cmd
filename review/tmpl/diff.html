@@ -1,0 +1,57 @@
+{{template "head" .}}
+<main class="diffpage">
+  <div id="viewinfo" hidden data-repo="{{.Repo}}" data-key="{{.Key}}" data-base="{{.BaseN}}" data-target="{{.TargetN}}" data-latest="{{.LatestN}}" data-file="{{.FileParam}}"></div>
+  <div class="pagehead">
+    <div>
+      <h1>{{.File.Name}}</h1>
+      <div class="byline"><a href="{{.FilesURL}}">{{.Change.Subject}}</a></div>
+    </div>
+    <div class="pageactions">
+      {{if .Drafts}}
+      <form method="post" action="{{.RepoURL}}/publish">
+        <input type="hidden" name="key" value="{{.Key}}">
+        <input type="hidden" name="return" value="{{.SelfURL}}">
+        <button type="submit" class="primary">Publish {{.Drafts}} draft{{if ne .Drafts 1}}s{{end}}</button>
+      </form>
+      {{end}}
+      {{if .CanComment}}{{template "reviewedbutton" reviewedArg .Repo .Target.ID .FileParam .File.Reviewed}}{{end}}
+      <button id="prefsbutton" title="Diff preferences (,)">⚙</button>
+    </div>
+  </div>
+
+  {{template "baseselect" .}}
+
+  <nav class="filenav">
+    {{if .Prev}}<a id="prevfile" href="{{.Prev.URL}}">← {{.Prev.Name}}</a>{{else}}<span></span>{{end}}
+    <a id="filelistlink" href="{{.FilesURL}}">All files</a>
+    {{if .Next}}<a id="nextfile" href="{{.Next.URL}}">{{.Next.Name}} →</a>{{else}}<span></span>{{end}}
+  </nav>
+
+  {{if not .CanComment}}
+  <p class="note">Uncommitted changes cannot be commented on: they have no snapshot to attach comments to. Commit them first.</p>
+  {{end}}
+
+  {{if .Stale}}
+  <div class="stalebox">
+    <h3>Comments whose lines are gone</h3>
+    {{range .Stale}}{{template "thread" threadArg . $.Repo $.User}}{{end}}
+  </div>
+  {{end}}
+
+  {{if .Binary}}
+    <p class="empty">Binary file.</p>
+  {{else if not .Rows}}
+    <p class="empty">No differences.</p>
+  {{else}}
+  <table class="diff{{if .Unified}} unified{{end}}" id="difftable" style="tab-size:{{.TabSize}}">
+    <colgroup>
+      {{if not .Unified}}<col class="numcol"><col class="codecol">{{end}}
+      <col class="numcol"><col class="codecol">
+    </colgroup>
+    <tbody id="diffbody">{{template "rows" .}}</tbody>
+  </table>
+  {{end}}
+</main>
+<dialog id="prefs">{{template "prefs" .}}</dialog>
+<script id="filedata" type="application/json">{{.FilesJSON}}</script>
+{{template "foot" .}}

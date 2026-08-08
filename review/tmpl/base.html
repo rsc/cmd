@@ -1,0 +1,64 @@
+{{define "head"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}}</title>
+<link rel="stylesheet" href="/style.css">
+<script src="/htmx.min.js" defer></script>
+</head>
+<body data-page="{{.Page}}">
+<header class="topbar">
+  <a class="logo" href="/">review</a>
+  {{if .Repo}}
+  <span class="sep">/</span>
+  <a class="repo" href="{{.RepoURL}}" title="{{.RepoPath}}">{{.Repo}}</a>
+  <span class="chip kind">{{.Kind}}</span>
+  {{end}}
+  <span class="spacer"></span>
+  <input id="search" class="search" type="search" placeholder="Filter (/)" autocomplete="off" spellcheck="false">
+  <button id="helpbutton" class="linkish" title="Keyboard shortcuts">?</button>
+</header>
+{{end}}
+
+{{define "foot"}}
+<dialog id="help">{{template "help" .}}</dialog>
+<div id="navbar" hidden></div>
+<script id="keymap" type="application/json">{{keyMap}}</script>
+<script src="/keys.js" defer></script>
+</body>
+</html>
+{{end}}
+
+{{define "help"}}
+<div class="helpbox">
+  <h2>Keyboard shortcuts</h2>
+  <div class="helpcols">
+  {{range keySections}}
+    <section>
+      <h3>{{.Title}}</h3>
+      <table>
+        {{range .Bindings}}
+        <tr><td class="keys">{{kbd .Keys}}</td><td class="desc">{{.Text}}</td></tr>
+        {{end}}
+      </table>
+    </section>
+  {{end}}
+  </div>
+  <p class="dismiss">Press <kbd>Esc</kbd> to close.</p>
+</div>
+{{end}}
+
+{{define "prefs"}}
+<form class="prefsbox" method="post" action="/prefs">
+  <h2>Diff preferences</h2>
+  <label>Context lines <input type="number" name="context" min="0" max="9999" value="{{.Context}}"></label>
+  <label>Tab width <input type="number" name="tabsize" min="1" max="16" value="{{.TabSize}}"></label>
+  <label><input type="checkbox" name="unified" value="1" {{if .Unified}}checked{{end}}> Unified diff</label>
+  <input type="hidden" name="return" value="{{.SelfURL}}">
+  <div class="formactions">
+    <button type="submit">Save</button>
+    <button type="button" onclick="this.closest('dialog').close()">Cancel</button>
+  </div>
+</form>
+{{end}}
