@@ -10,8 +10,10 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -208,11 +210,41 @@ func cmdComments(args []string) {
 		keep = append(keep, view(r, t, snaps[t.SnapshotID], *ctx))
 	}
 
+	sortByStack(r, keep)
+
 	if *asJSON {
 		printJSON(keep)
 		return
 	}
 	printText(keep)
+}
+
+// sortByStack orders threads by the commit they belong to, oldest first,
+// so that reading the output in order means fixing the base of a stack
+// before whatever is built on top of it. Threads on the same commit keep
+// the order the database gave them, by snapshot, file, and line.
+func sortByStack(r *Review, views []*threadView) {
+	// Changes come back with children before parents, so counting down
+	// from the end puts the oldest commit first.
+	rank := map[string]int{}
+	if changes, err := r.Repo.Changes(); err == nil {
+		for i, c := range changes {
+			rank[c.Key] = len(changes) - i
+		}
+	}
+	// A comment on a commit that is no longer pending has no place in the
+	// stack; leave those at the end.
+	const unknown = math.MaxInt
+	at := func(v *threadView) int {
+		if v.Snap == nil {
+			return unknown
+		}
+		if n, ok := rank[v.Snap.Key]; ok {
+			return n
+		}
+		return unknown
+	}
+	sort.SliceStable(views, func(i, j int) bool { return at(views[i]) < at(views[j]) })
 }
 
 func printJSON(views []*threadView) {

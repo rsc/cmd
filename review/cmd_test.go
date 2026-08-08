@@ -224,3 +224,70 @@ func TestCommentsHidesDrafts(t *testing.T) {
 		t.Errorf("-drafts did not show the draft:\n%s", out.String())
 	}
 }
+
+// TestCommentsOldestCommitFirst checks that comments are printed with the
+// base of a stack before what is built on top of it, which is the order
+// they have to be addressed in.
+func TestCommentsOldestCommitFirst(t *testing.T) {
+	r, dir := inRepo(t)
+
+	// Two stacked commits: base, then top on top of it.
+	write(t, dir, "base.go", "package p\n\nfunc Base() {}\n")
+	do(t, dir, "git", "add", ".")
+	do(t, dir, "git", "commit", "-q", "-m", "p: add Base\n\nChange-Id: Ibase\n")
+	write(t, dir, "top.go", "package p\n\nfunc Top() {}\n")
+	do(t, dir, "git", "add", ".")
+	do(t, dir, "git", "commit", "-q", "-m", "p: add Top\n\nChange-Id: Itop\n")
+
+	changes, err := r.Repo.Changes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The repository lists children before parents, so the newest is first.
+	if len(changes) != 2 || changes[0].Key != "Itop" || changes[1].Key != "Ibase" {
+		t.Fatalf("changes = %+v, want Itop then Ibase", changes)
+	}
+	for _, c := range changes {
+		snaps, err := r.EnsureSnapshot(c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		file := "base.go"
+		if c.Key == "Itop" {
+			file = "top.go"
+		}
+		if _, err := r.DB.AddThread(snaps[0].ID, file, "new", 3, "func "+c.Key, &Comment{
+			Author: "rsc", Body: "remark on " + c.Key, Draft: false,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	out := captureOut(t)
+	cmdComments(cli("-c", "0"))
+	got := out.String()
+
+	i := strings.Index(got, "remark on Ibase")
+	j := strings.Index(got, "remark on Itop")
+	if i < 0 || j < 0 {
+		t.Fatalf("both comments should be listed:\n%s", got)
+	}
+	if i > j {
+		t.Errorf("the newer commit was printed first:\n%s", got)
+	}
+
+	// The JSON form is ordered the same way, since an agent reads it in
+	// sequence just as a person reads the text.
+	out = captureOut(t)
+	cmdComments(cli("-json"))
+	var js []jsonThread
+	if err := json.Unmarshal([]byte(out.String()), &js); err != nil {
+		t.Fatal(err)
+	}
+	if len(js) != 2 {
+		t.Fatalf("got %d threads, want 2", len(js))
+	}
+	if js[0].Change != "Ibase" || js[1].Change != "Itop" {
+		t.Errorf("JSON order = %s then %s, want Ibase then Itop", js[0].Change, js[1].Change)
+	}
+}
