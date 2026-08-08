@@ -284,10 +284,8 @@
 			if (!row) return;
 			const next = row.nextElementSibling;
 			if (next && next.classList.contains("inlinerow")) { next.remove(); return; }
-			const q = new URLSearchParams({ key: view.key, f: row.dataset.file });
-			if (view.base && view.base !== "0") q.set("base", view.base);
-			if (view.target) q.set("s", view.target);
-			fetch("/" + encodeURIComponent(view.repo) + "/f/inline?" + q.toString())
+			if (!row.dataset.inline) return;
+			fetch(row.dataset.inline)
 				.then((r) => r.text())
 				.then((html) => {
 					const tr = document.createElement("tr");
@@ -300,10 +298,16 @@
 		},
 
 		toggleAllInlineDiffs() {
-			const open = document.querySelector("tr.inlinerow");
-			if (open) { document.querySelectorAll("tr.inlinerow").forEach((r) => r.remove()); return; }
+			if (document.querySelector("tr.inlinerow")) {
+				document.querySelectorAll("tr.inlinerow").forEach((r) => r.remove());
+				setExpandLabel(false);
+				return;
+			}
 			const all = rows();
 			all.forEach((_, i) => { setCursor(i, false); actions.toggleInlineDiff(); });
+			// The diffs arrive one fetch at a time, so the button says what
+			// it will do next rather than waiting for them all to land.
+			setExpandLabel(true);
 		},
 
 		// ---- diffs -------------------------------------------------------
@@ -453,6 +457,12 @@
 		diffBaseAgainstLatest() { withParams({ base: null, s: view.latest }); },
 	};
 
+	// setExpandLabel keeps the button naming what pressing it would do.
+	function setExpandLabel(expanded) {
+		const b = document.getElementById("expandall");
+		if (b) b.textContent = expanded ? "Collapse all" : "Expand all";
+	}
+
 	function markSide() {
 		document.body.classList.toggle("side-old", side === "old");
 		document.body.classList.toggle("side-new", side === "new");
@@ -587,6 +597,8 @@
 		if (b) { e.preventDefault(); actions.showHelp(); return; }
 		const p = e.target.closest("#prefsbutton");
 		if (p) { e.preventDefault(); actions.diffPrefs(); return; }
+		const x = e.target.closest("#expandall");
+		if (x) { e.preventDefault(); actions.toggleAllInlineDiffs(); return; }
 		// Clicking a row moves the cursor there, and anywhere in the bar
 		// of a change or a file opens it: the title is a small target for
 		// something the whole row stands for. Controls inside the row do
