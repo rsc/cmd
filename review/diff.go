@@ -200,9 +200,10 @@ type Row struct {
 	// than the pale one.
 	Total bool
 
-	// NoIntraline reports that the two sides differ too much for
-	// intraline highlighting to be useful, so the whole line is
-	// painted with the strong color.
+	// NoIntraline reports that there is no part of this line to single
+	// out as changed, so the whole line is painted with the strong color:
+	// either the two sides differ too much for highlighting a part of
+	// them to help, or the line has no counterpart at all.
 	NoIntraline bool
 
 	// For RowSkip: how many unchanged lines are hidden, and the
@@ -303,18 +304,24 @@ func chunkRows(del, ins []string, a0, b0 int) []Row {
 		l.Spans, r.Spans = ls, rs
 		rows = append(rows, Row{Kind: RowReplace, L: l, R: r, Total: total, NoIntraline: !ok})
 	}
+	// The lines past the pairing have nothing on the other side, so all of
+	// their content is new: mark them as having no intraline information,
+	// which colors the whole line rather than leaving it in the pale shade
+	// used for a line that merely contains a change.
 	for i := n; i < len(del); i++ {
 		rows = append(rows, Row{
-			Kind:  RowDelete,
-			L:     Line{Num: a0 + i + 1, Text: del[i]},
-			Total: total,
+			Kind:        RowDelete,
+			L:           Line{Num: a0 + i + 1, Text: del[i]},
+			Total:       total,
+			NoIntraline: true,
 		})
 	}
 	for i := n; i < len(ins); i++ {
 		rows = append(rows, Row{
-			Kind:  RowInsert,
-			R:     Line{Num: b0 + i + 1, Text: ins[i]},
-			Total: total,
+			Kind:        RowInsert,
+			R:           Line{Num: b0 + i + 1, Text: ins[i]},
+			Total:       total,
+			NoIntraline: true,
 		})
 	}
 	return rows
