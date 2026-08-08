@@ -36,7 +36,7 @@ func usage() {
 }
 
 // defaultAddr is where the background server listens unless told otherwise.
-const defaultAddr = "localhost:8781"
+const defaultAddr = "localhost:2626"
 
 // Flags shared by more than one command. They are registered on each
 // command's own flag set rather than before the command, so that every
