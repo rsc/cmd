@@ -25,6 +25,18 @@
     </div>
   </div>
 
+  {{if .MessageHead}}
+  <section class="commitmsg">
+    <pre>{{.MessageHead}}</pre>
+    {{if .MessageRest}}
+    <details>
+      <summary>{{.MoreLines}} more line{{if ne .MoreLines 1}}s{{end}}</summary>
+      <pre>{{.MessageRest}}</pre>
+    </details>
+    {{end}}
+  </section>
+  {{end}}
+
   {{template "baseselect" .}}
 
   {{if .Snapshots}}
