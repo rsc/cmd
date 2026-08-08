@@ -45,10 +45,18 @@
 	function spec(e) {
 		let s = "";
 		if (e.ctrlKey || e.metaKey) s += "Mod+";
+		let key = e.key;
+		// A letter typed with shift held is the shifted letter, whatever
+		// the browser reports. Without this, holding shift across the page
+		// load that M causes and typing it again arrives as a plain m,
+		// which is a different command.
+		if (e.shiftKey && key.length === 1 && key >= "a" && key <= "z") {
+			key = key.toUpperCase();
+		}
 		// Shift is part of the key itself for printable characters
 		// ("J" not "Shift+j"), but must be named for the arrow keys.
-		if (e.shiftKey && e.key.length > 1) s += "Shift+";
-		return s + e.key;
+		if (e.shiftKey && key.length > 1) s += "Shift+";
+		return s + key;
 	}
 
 	function editing(el) {
