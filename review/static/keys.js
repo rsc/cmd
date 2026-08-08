@@ -406,9 +406,12 @@
 			post(url).then(done, done);
 		},
 
+		// Up from a file is its change, with the file named in the
+		// fragment so that arriving there lands on it again.
 		openFileList() {
 			const a = document.getElementById("filelistlink");
-			if (a) go(a.href);
+			if (!a) return;
+			go(view.file ? a.href + "#" + encodeURIComponent(view.file) : a.href);
 		},
 
 		nextFile() {
@@ -605,11 +608,11 @@
 	}
 
 	// selectFromHash puts the cursor on the row named in the fragment,
-	// which is how coming up from a change lands back on it.
+	// which is how coming up from a change or a file lands back on it.
 	function selectFromHash() {
 		if (!location.hash) return false;
-		const key = decodeURIComponent(location.hash.slice(1));
-		const i = rows().findIndex((r) => r.dataset.key === key);
+		const want = decodeURIComponent(location.hash.slice(1));
+		const i = rows().findIndex((r) => r.dataset.key === want || r.dataset.file === want);
 		if (i < 0) return false;
 		setCursor(i);
 		return true;
