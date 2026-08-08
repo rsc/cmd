@@ -523,7 +523,14 @@ tr.threadrow td.threadcell {
 	margin-bottom: 12px;
 }
 
+.filelisthead { display: flex; justify-content: flex-end; padding-bottom: 6px; }
+#expandall { font-size: 12px; padding: 3px 10px; }
+
 tr.inlinerow > td { padding: 0 0 8px 28px; background: #fff; }
+/* An inline diff is a whole file inside one row of the file list, so it
+ * needs its own frame to read as one rather than running into the rows
+ * above and below. */
+tr.inlinerow table.inlinediff { border: var(--border); margin-top: 4px; }
 
 /* The bar that appears when n or p runs off the end of a diff, telling
  * you that pressing it again moves to the next or previous file. */

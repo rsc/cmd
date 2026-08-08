@@ -1414,3 +1414,49 @@ func TestChangePageReviewShortcut(t *testing.T) {
 		t.Errorf("timeline does not mark the selected snapshot:\n%s", body)
 	}
 }
+
+// TestInlineDiffURL checks that the file list offers each file's diff as a
+// fragment carrying the base and target the page is showing. Rebuilding
+// that URL in the browser from the resolved snapshot numbers loses the
+// difference between "the parent" and "whatever was last reviewed", and
+// asks for files that are not in the resulting diff.
+func TestInlineDiffURL(t *testing.T) {
+	s, r, dir := newTestServer(t)
+	twoSnapshots(t, s, r, dir)
+	snaps, _ := r.DB.Snapshots(r.Root(), "Itest1")
+
+	// With snapshot 1 reviewed, a bare URL bases the diff on it, while an
+	// explicit parent asks for the whole change: different file lists.
+	if err := r.DB.SetSnapshotReviewed(snaps[0].ID, true); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tt := range []struct{ query, want string }{
+		{"?base=parent", "base=parent"},
+		{"?base=1&s=2", "base=1"},
+	} {
+		body := mustGet(t, s, repoURL(t, r, "/c/Itest1")+tt.query)
+		if !strings.Contains(body, "data-inline=") {
+			t.Fatalf("%s: file list offers no inline diff:\n%s", tt.query, body)
+		}
+		if !strings.Contains(body, tt.want) {
+			t.Errorf("%s: inline URL does not carry %s", tt.query, tt.want)
+		}
+	}
+
+	// The URL it offers must actually serve that file's diff.
+	body := mustGet(t, s, repoURL(t, r, "/c/Itest1")+"?base=parent")
+	m := regexp.MustCompile(`data-inline="([^"]*f=a\.go[^"]*)"`).FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("no inline URL for a.go:\n%s", body)
+	}
+	frag := mustGet(t, s, htmlUnescape(m[1]))
+	if !strings.Contains(frag, "inlinediff") || !strings.Contains(frag, "package main") {
+		t.Errorf("inline fragment is not a diff of the file:\n%s", frag)
+	}
+
+	// And the button that shows them all is on the page.
+	if !strings.Contains(body, `id="expandall"`) {
+		t.Error("no Expand all button on the change page")
+	}
+}

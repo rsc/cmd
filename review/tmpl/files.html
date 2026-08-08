@@ -53,11 +53,15 @@
   </ol>
   {{end}}
 
+  <div class="filelisthead">
+    <button id="expandall" title="Show every diff inline (I)">Expand all</button>
+  </div>
+
   <table class="filelist">
     <tbody>
       {{range .Files}}
-      <tr class="item filerow" data-href="{{.URL}}" data-file="{{.Path}}"
-          data-comments="{{.Comments}}" data-filter="{{.Path}}">
+      <tr class="item filerow" data-href="{{.URL}}" data-inline="{{.InlineURL}}"
+          data-file="{{.Path}}" data-comments="{{.Comments}}" data-filter="{{.Path}}">
         <td class="status status-{{printf "%c" .Status}}">{{printf "%c" .Status}}</td>
         <td class="name"><a href="{{.URL}}">{{.Name}}</a></td>
         <td class="counts">
