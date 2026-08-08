@@ -29,7 +29,7 @@ snapshot of the repository holding the current directory, and opens a
 browser at that repository's page. The first such run starts the server in
 the background and prints where it is listening; later runs, in whatever
 repository, find the running one and simply open another tab. The -a flag
-sets the address to listen on (default localhost:8781); if it is busy,
+sets the address to listen on (default localhost:2626); if it is busy,
 review takes a free port instead. The -n flag prints the URL rather than
 opening a browser.
 
