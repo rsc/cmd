@@ -240,6 +240,6 @@ func (r *gitRepo) Pin(name, rev string) error {
 	if rev == WorkingRev {
 		return nil
 	}
-	_, err := run(r.root, "git", "update-ref", "refs/review/"+name, rev)
+	_, err := run(r.root, "git", "update-ref", pinRef+name, rev)
 	return err
 }
