@@ -393,3 +393,58 @@ func TestUnifiedKeepsSkips(t *testing.T) {
 		t.Errorf("Unified:\n%s", rowsString(got))
 	}
 }
+
+// TestChunkTailIsWhollyNew covers a chunk that both changes a line and
+// adds lines after it. The added lines have no counterpart, so all of
+// their content is new and they take the strong color, rather than the
+// pale one used for a line that merely contains a change.
+func TestChunkTailIsWhollyNew(t *testing.T) {
+	old := "jj workflows, not to replace them. It only adds what jj itself lacks.\n"
+	new := "jj workflows, not to replace them. It only adds what jj itself lacks;\n" +
+		"the mail command below, for example, builds on jj's own\n" +
+		"“jj gerrit upload” (available in jj v0.43 and later).\n"
+
+	rows := Diff([]byte(old), []byte(new)).Rows
+	if len(rows) != 3 {
+		t.Fatalf("got %d rows, want 3:\n%s", len(rows), rowsString(rows))
+	}
+	// The first line pairs off, so only the changed word is highlighted.
+	if rows[0].Kind != RowReplace {
+		t.Fatalf("row 0 = %s, want a paired row", rowString(rows[0]))
+	}
+	if rows[0].NoIntraline {
+		t.Error("the paired line lost its intraline highlight")
+	}
+	if len(rows[0].R.Spans) == 0 {
+		t.Error("the paired line has no intraline highlight")
+	}
+	// The two that follow have nothing on the left, so all of them is new.
+	for _, i := range []int{1, 2} {
+		r := rows[i]
+		if r.Kind != RowInsert {
+			t.Errorf("row %d = %s, want an addition", i, rowString(r))
+			continue
+		}
+		if !r.NoIntraline {
+			t.Errorf("row %d is an addition with no counterpart but is not marked wholly changed: %s", i, rowString(r))
+		}
+	}
+	// It is still not a "total" chunk: the left side is not empty, so the
+	// paired row keeps the pale background under its highlight.
+	if rows[0].Total || rows[1].Total {
+		t.Error("a chunk with both a removal and additions was marked total")
+	}
+}
+
+// TestUnpairedRemovalIsWhollyOld is the same on the other side.
+func TestUnpairedRemovalIsWhollyOld(t *testing.T) {
+	rows := Diff([]byte("one\ntwo\nthree\n"), []byte("ONE\n")).Rows
+	if len(rows) != 3 {
+		t.Fatalf("got %d rows:\n%s", len(rows), rowsString(rows))
+	}
+	for _, i := range []int{1, 2} {
+		if rows[i].Kind != RowDelete || !rows[i].NoIntraline {
+			t.Errorf("row %d = %s, want a removal marked wholly changed", i, rowString(rows[i]))
+		}
+	}
+}
