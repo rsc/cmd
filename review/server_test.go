@@ -1162,20 +1162,103 @@ func TestDeleteDraftRemovesEmptyThread(t *testing.T) {
 		t.Errorf("delete did not return the remaining thread:\n%s", w.Body.String())
 	}
 
-	// Deleting the last one removes the thread, and the fragment is empty
-	// so that htmx swaps it out of the page.
+	// Deleting the last one removes the thread, leaving only the way back.
 	w = post(t, s, repoURL(t, r, "/f/delete?comment=")+strconv.FormatInt(got.Comments[0].ID, 10), nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("delete = %d: %s", w.Code, w.Body.String())
 	}
-	if strings.TrimSpace(w.Body.String()) != "" {
-		t.Errorf("deleting the last comment returned %q, want nothing", w.Body.String())
+	if body := w.Body.String(); !strings.Contains(body, "Undelete draft") {
+		t.Errorf("deleting the last comment did not offer to undo it:\n%s", body)
+	} else if strings.Contains(body, `id="thread-`) {
+		t.Errorf("deleting the last comment left a thread behind:\n%s", body)
 	}
 	if threads, _ = r.DB.Threads(r.Root(), "Itest1"); len(threads) != 0 {
 		t.Errorf("thread survived its last comment: %+v", threads)
 	}
 	if body := mustGet(t, s, repoURL(t, r, "/d/Itest1?f=a.go")); strings.Contains(body, "one") {
 		t.Error("deleted comment still shows in the diff")
+	}
+}
+
+// TestUndeleteDraft checks that a deleted draft can be put back, both
+// when its thread survived it and when it did not.
+func TestUndeleteDraft(t *testing.T) {
+	s, r, _ := newTestServer(t)
+	post(t, s, repoURL(t, r, "/f/comment"), url.Values{
+		"key": {"Itest1"}, "f": {"a.go"}, "side": {"new"}, "line": {"4"}, "body": {"only draft"},
+	})
+	threads, _ := r.DB.Threads(r.Root(), "Itest1")
+	th := threads[0]
+
+	// Deleting the only comment takes the thread with it; the fragment
+	// carries everything needed to rebuild it.
+	w := post(t, s, repoURL(t, r, "/f/delete?comment=")+strconv.FormatInt(th.Comments[0].ID, 10), nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("delete = %d: %s", w.Code, w.Body.String())
+	}
+	form := w.Body.String()
+	for _, want := range []string{
+		`name="body" value="only draft"`,
+		`name="f" value="a.go"`,
+		`name="side" value="new"`,
+		`name="line" value="4"`,
+		`name="anchor" value="` + "\tprintln(&#34;hi&#34;)",
+	} {
+		if !strings.Contains(form, want) {
+			t.Errorf("undo form missing %s:\n%s", want, form)
+		}
+	}
+
+	w = post(t, s, repoURL(t, r, "/f/undelete"), url.Values{
+		"body": {"only draft"}, "author": {"rsc"}, "snapshot": {strconv.FormatInt(th.SnapshotID, 10)},
+		"f": {"a.go"}, "side": {"new"}, "line": {"4"}, "anchor": {"\tprintln(\"hi\")"},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("undelete = %d: %s", w.Code, w.Body.String())
+	}
+	threads, _ = r.DB.Threads(r.Root(), "Itest1")
+	if len(threads) != 1 {
+		t.Fatalf("got %d threads after undelete, want 1", len(threads))
+	}
+	back := threads[0]
+	if len(back.Comments) != 1 || back.Comments[0].Body != "only draft" {
+		t.Fatalf("restored thread = %+v", back.Comments)
+	}
+	if !back.Comments[0].Draft {
+		t.Error("restored comment is not a draft")
+	}
+	// It came back where it was, so it still shows against its line.
+	if back.Line != 4 || back.File != "a.go" || back.AnchorText != "\tprintln(\"hi\")" {
+		t.Errorf("restored thread landed at %s:%d anchored to %q", back.File, back.Line, back.AnchorText)
+	}
+
+	// Now with a thread that survives: delete a second draft from it.
+	second, err := r.DB.AddComment(back.ID, &Comment{Author: "rsc", Body: "second draft", Draft: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w = post(t, s, repoURL(t, r, "/f/delete?comment=")+strconv.FormatInt(second.ID, 10), nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("delete = %d: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	// The rest of the thread stays on the page, with the way back beside it.
+	if !strings.Contains(body, "only draft") {
+		t.Errorf("deleting one draft hid the rest of the thread:\n%s", body)
+	}
+	if !strings.Contains(body, "Undelete draft") || !strings.Contains(body, `name="thread"`) {
+		t.Errorf("undo form does not name the surviving thread:\n%s", body)
+	}
+
+	w = post(t, s, repoURL(t, r, "/f/undelete"), url.Values{
+		"body": {"second draft"}, "author": {"rsc"}, "thread": {strconv.FormatInt(back.ID, 10)},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("undelete = %d: %s", w.Code, w.Body.String())
+	}
+	again, _ := r.DB.Thread(back.ID)
+	if len(again.Comments) != 2 || again.Comments[1].Body != "second draft" {
+		t.Fatalf("thread after undelete = %+v", again.Comments)
 	}
 }
 

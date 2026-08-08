@@ -98,8 +98,7 @@
         {{if .Draft}}
         <span class="draftactions">
           <button class="linkish small danger" hx-post="/{{$.Repo}}/f/delete?comment={{.ID}}"
-                  hx-target="closest .thread" hx-swap="outerHTML"
-                  hx-confirm="Delete this draft comment?">Delete</button>
+                  hx-target="closest .thread" hx-swap="outerHTML">Delete</button>
         </span>
         {{end}}
       </div>
@@ -117,6 +116,30 @@
     <button class="resolve" hx-post="/{{.Repo}}/f/resolve?thread={{.Thread.ID}}" hx-target="closest .thread" hx-swap="outerHTML">
       {{if .Thread.Resolved}}Unresolve{{else}}Resolve{{end}}
     </button>
+  </div>
+</div>
+{{end}}
+
+{{define "deleted"}}
+<div class="threadslot">
+  {{if .Thread}}{{template "thread" threadArg .Thread .Repo .User}}{{end}}
+  <div class="undelete">
+    <span class="chip draftchip">draft deleted</span>
+    <form hx-post="/{{.Repo}}/f/undelete" hx-target="closest .threadslot" hx-swap="outerHTML">
+      <input type="hidden" name="body" value="{{.Body}}">
+      <input type="hidden" name="author" value="{{.Author}}">
+      {{if .Thread}}
+      <input type="hidden" name="thread" value="{{.Thread.ID}}">
+      {{else}}
+      <input type="hidden" name="snapshot" value="{{.Snapshot}}">
+      <input type="hidden" name="f" value="{{.File}}">
+      <input type="hidden" name="side" value="{{.Side}}">
+      <input type="hidden" name="line" value="{{.Line}}">
+      <input type="hidden" name="anchor" value="{{.Anchor}}">
+      <input type="hidden" name="resolved" value="{{if .Resolved}}1{{else}}0{{end}}">
+      {{end}}
+      <button type="submit" class="linkish small">Undelete draft</button>
+    </form>
   </div>
 </div>
 {{end}}
