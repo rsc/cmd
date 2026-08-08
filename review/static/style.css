@@ -369,6 +369,11 @@ body.hidethreads tr.threadrow { display: none; }
 
 /* ---- comment threads ---- */
 
+/* Deleting the last draft in a thread takes the thread away but leaves
+ * its row, which would show as a blank band between two lines of code.
+ * A row holding neither a thread nor a form has nothing left to say. */
+tr.threadrow:not(:has(.thread)):not(:has(form)) { display: none; }
+
 tr.threadrow td.threadcell {
 	padding: 6px;
 	background: var(--gray-50);
