@@ -263,7 +263,8 @@
 
 		openPublish() {
 			const f = document.querySelector('form[action$="/publish"]');
-			if (f) f.requestSubmit();
+			if (!f) { showBar("No drafts to publish"); return; }
+			f.requestSubmit();
 		},
 
 		// ---- file list ---------------------------------------------------
@@ -586,11 +587,16 @@
 		if (b) { e.preventDefault(); actions.showHelp(); return; }
 		const p = e.target.closest("#prefsbutton");
 		if (p) { e.preventDefault(); actions.diffPrefs(); return; }
-		// Clicking a row moves the cursor there.
+		// Clicking a row moves the cursor there, and anywhere in the bar
+		// of a change or a file opens it: the title is a small target for
+		// something the whole row stands for. Controls inside the row do
+		// their own thing.
 		const row = e.target.closest("tr.item, tr.diffrow");
-		if (row) {
-			const i = rows().indexOf(row);
-			if (i >= 0) setCursor(i, false);
+		if (!row) return;
+		const i = rows().indexOf(row);
+		if (i >= 0) setCursor(i, false);
+		if (row.dataset.href && !e.target.closest("a, button, input, label, select, textarea")) {
+			go(row.dataset.href);
 		}
 	});
 
