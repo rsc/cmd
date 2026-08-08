@@ -467,6 +467,7 @@ type fileInfo struct {
 	Unresolved int
 	Reviewed   bool
 	URL        string
+	InlineURL  string // the same diff as a fragment, for the file list
 }
 
 // Name returns the file's display name.
@@ -548,7 +549,12 @@ func (s *server) files(w http.ResponseWriter, req *http.Request, r *Review) erro
 		},
 	}
 	for _, f := range v.Files {
-		info := &fileInfo{File: f, Reviewed: reviewed[f.Path], URL: s.diffURL(r, c.Key, f.Path, base, target)}
+		info := &fileInfo{
+			File:      f,
+			Reviewed:  reviewed[f.Path],
+			URL:       s.diffURL(r, c.Key, f.Path, base, target),
+			InlineURL: s.inlineURL(r, c.Key, f.Path, base, target),
+		}
 		for _, t := range threads {
 			if t.File != f.Path {
 				continue
@@ -623,6 +629,22 @@ func (s *server) diffURL(r *Review, key, file, base, target string) string {
 		q.Set("s", target)
 	}
 	return "/" + url.PathEscape(r.Name) + "/d/" + url.PathEscape(key) + "?" + q.Encode()
+}
+
+// inlineURL is the file's own diff as a fragment. It is built here rather
+// than assembled in the browser so that it carries exactly the base and
+// target the page is showing; rebuilding it from the resolved snapshot
+// numbers loses the difference between "the parent" and "whatever was
+// last reviewed".
+func (s *server) inlineURL(r *Review, key, file, base, target string) string {
+	q := url.Values{"key": {key}, "f": {file}}
+	if base != "" {
+		q.Set("base", base)
+	}
+	if target != "" {
+		q.Set("s", target)
+	}
+	return "/" + url.PathEscape(r.Name) + "/f/inline?" + q.Encode()
 }
 
 func (s *server) filesURL(r *Review, key, base, target string) string {
