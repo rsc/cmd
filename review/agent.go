@@ -53,6 +53,12 @@ The loop:
  2. Fix what each thread asks for, editing the code as you normally would.
     Amending the commit is expected; comments survive it.
 
+    Work through the commits from the oldest to the newest, not in the
+    order the comments happen to be printed in. Later commits are stacked
+    on the ones before them, so a fix to an early commit is rebased
+    through everything above it; fixing a later one first only means
+    doing that work twice, and can leave conflicts to untangle in between.
+
  3. Reply to every thread you acted on, by its number:
 
         review reply -resolve 12 'Renamed to parseHeader.'
