@@ -197,8 +197,15 @@
 		goRepos() { go("/"); },
 
 		// Up from a change is that repository's change list, not the list
-		// of every repository.
-		goChanges() { go(view.repo ? "/" + encodeURIComponent(view.repo) : "/"); },
+		// of every repository. The change being left is named in the
+		// fragment, so that arriving there puts the cursor back on it
+		// rather than at the top of the list.
+		goChanges() {
+			if (!view.repo) { go("/"); return; }
+			let u = "/" + encodeURIComponent(view.repo);
+			if (view.key) u += "#" + encodeURIComponent(view.key);
+			go(u);
+		},
 
 		reload() { window.location.reload(); },
 
@@ -589,6 +596,17 @@
 		});
 	}
 
+	// selectFromHash puts the cursor on the row named in the fragment,
+	// which is how coming up from a change lands back on it.
+	function selectFromHash() {
+		if (!location.hash) return false;
+		const key = decodeURIComponent(location.hash.slice(1));
+		const i = rows().findIndex((r) => r.dataset.key === key);
+		if (i < 0) return false;
+		setCursor(i);
+		return true;
+	}
+
 	markSide();
-	if (page !== "diff") setCursor(0, false);
+	if (page !== "diff" && !selectFromHash()) setCursor(0, false);
 })();
