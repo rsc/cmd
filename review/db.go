@@ -136,6 +136,16 @@ type Snapshot struct {
 // ShortRev returns an abbreviated commit ID for display.
 func (s *Snapshot) ShortRev() string { return shortRev(s.Rev) }
 
+// Change rebuilds enough of the change for rendering the commit message
+// as it stood when the snapshot was taken.
+func (s *Snapshot) Change() *Change {
+	return &Change{
+		Key: s.Key, Rev: s.Rev, Parent: s.Parent,
+		Subject: s.Subject, Message: s.Message,
+		Author: s.Author, Date: s.Date,
+	}
+}
+
 // A Thread is a comment thread anchored to one line of one file in one
 // snapshot. Side is "new" for the snapshot's own content and "old" for
 // the content of the parent it was diffed against.
