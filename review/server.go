@@ -190,7 +190,7 @@ func newServer(db *DB, home string, pin bool) *server {
 
 // staticFiles are served from the top level, so that no repository name
 // can shadow them.
-var staticFiles = []string{"style.css", "keys.js", "htmx.min.js"}
+var staticFiles = []string{"style.css", "keys.js", "htmx.min.js", "favicon.svg"}
 
 func serveStatic(path string) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
