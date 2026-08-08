@@ -171,6 +171,7 @@ func newServer(db *DB, home string, pin bool) *server {
 	s.mux.HandleFunc("GET /{repo}/f/editform", s.repoHandle(s.editForm))
 	s.mux.HandleFunc("POST /{repo}/f/edit", s.repoHandle(s.edit))
 	s.mux.HandleFunc("POST /{repo}/f/delete", s.repoHandle(s.deleteComment))
+	s.mux.HandleFunc("POST /{repo}/f/undelete", s.repoHandle(s.undelete))
 	s.mux.HandleFunc("POST /{repo}/f/reviewed", s.repoHandle(s.reviewed))
 	s.mux.HandleFunc("POST /{repo}/f/snapshot-reviewed", s.repoHandle(s.snapshotReviewed))
 	s.mux.HandleFunc("POST /{repo}/f/lgtm", s.repoHandle(s.lgtm))
@@ -1238,6 +1239,25 @@ func (s *server) edit(w http.ResponseWriter, req *http.Request, r *Review) error
 	return s.renderThread(w, r, c.ThreadID)
 }
 
+// undoFrag holds everything needed to put a deleted draft back, so that
+// deleting one needs no confirmation: the way out is to undo it, which is
+// quicker to read than a dialog is to dismiss.
+type undoFrag struct {
+	Repo   string
+	User   string
+	Thread *Thread // what is left of the thread, nil if the draft was all of it
+	Body   string
+	Author string
+
+	// Enough to rebuild the thread when the draft was its only comment.
+	Snapshot int64
+	File     string
+	Side     string
+	Line     int
+	Anchor   string
+	Resolved bool
+}
+
 func (s *server) deleteComment(w http.ResponseWriter, req *http.Request, r *Review) error {
 	id, err := strconv.ParseInt(req.FormValue("comment"), 10, 64)
 	if err != nil {
@@ -1247,16 +1267,68 @@ func (s *server) deleteComment(w http.ResponseWriter, req *http.Request, r *Revi
 	if err != nil {
 		return err
 	}
+	// Read the thread before deleting: if this draft is all of it, the
+	// thread goes too and this is the only record of where it was.
+	t, err := r.DB.Thread(c.ThreadID)
+	if err != nil {
+		return err
+	}
 	gone, err := r.DB.DeleteComment(id)
 	if err != nil {
 		return err
 	}
-	if gone {
-		// The thread went with it; replacing it with nothing removes it
-		// from the page.
-		return nil
+
+	undo := &undoFrag{
+		Repo: r.Name, User: s.user, Body: c.Body, Author: c.Author,
+		Snapshot: t.SnapshotID, File: t.File, Side: t.Side,
+		Line: t.Line, Anchor: t.AnchorText, Resolved: t.Resolved,
 	}
-	return s.renderThread(w, r, c.ThreadID)
+	if !gone {
+		if undo.Thread, err = r.DB.Thread(c.ThreadID); err != nil {
+			return err
+		}
+	}
+	return tmpl.ExecuteTemplate(w, "deleted", undo)
+}
+
+// undelete puts back a draft deleted a moment ago, rebuilding its thread
+// if that went with it.
+func (s *server) undelete(w http.ResponseWriter, req *http.Request, r *Review) error {
+	body := strings.TrimSpace(req.FormValue("body"))
+	if body == "" {
+		return fmt.Errorf("nothing to undelete")
+	}
+	c := &Comment{Author: req.FormValue("author"), Body: body, Draft: true}
+	if c.Author == "" {
+		c.Author = s.user
+	}
+
+	if id := req.FormValue("thread"); id != "" {
+		n, err := strconv.ParseInt(id, 10, 64)
+		if err != nil {
+			return err
+		}
+		if _, err := r.DB.AddComment(n, c); err != nil {
+			return err
+		}
+		return s.renderThread(w, r, n)
+	}
+
+	snapshot, err := strconv.ParseInt(req.FormValue("snapshot"), 10, 64)
+	if err != nil {
+		return err
+	}
+	line, _ := strconv.Atoi(req.FormValue("line"))
+	t, err := r.DB.AddThread(snapshot, req.FormValue("f"), req.FormValue("side"), line, req.FormValue("anchor"), c)
+	if err != nil {
+		return err
+	}
+	if req.FormValue("resolved") == "1" {
+		if err := r.DB.SetResolved(t.ID, true); err != nil {
+			return err
+		}
+	}
+	return s.renderThread(w, r, t.ID)
 }
 
 func (s *server) resolve(w http.ResponseWriter, req *http.Request, r *Review) error {
