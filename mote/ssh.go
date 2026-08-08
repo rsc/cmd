@@ -81,7 +81,7 @@ func closeSSHSocket(sock string) error {
 	}
 	closed, err := sshControlExit("ControlPath "+sock, "unused", nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("close ssh://%s: %v", name, err)
 	}
 	if closed {
 		log.Printf("closed shared ssh connection to %s", name)

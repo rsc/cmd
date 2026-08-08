@@ -271,6 +271,58 @@ func TestDaemonServeTwice(t *testing.T) {
 	}
 }
 
+func TestDaemonStopServing(t *testing.T) {
+	// Stopping the daemon ends a running "mote serve". The server is
+	// parked reading from the daemon and the daemon does not exit until
+	// its clients do, so without a hangup neither would ever exit.
+	setupDaemonDirs(t)
+	const name = "test"
+	d, err := newDaemon(name, new(fakeNet))
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := make(chan error, 1)
+	go func() { run <- d.run() }()
+
+	serve := make(chan error, 1)
+	go func() { serve <- daemonServe(name) }()
+
+	// Wait for the registration, so that the stop has a server to find.
+	for i := 0; ; i++ {
+		d.mu.Lock()
+		registered := d.serveConn != nil
+		d.mu.Unlock()
+		if registered {
+			break
+		}
+		if i == 500 {
+			d.stop()
+			t.Fatal("mote serve never registered")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if err := daemonStop(name); err != nil {
+		t.Fatalf("daemonStop: %v", err)
+	}
+	select {
+	case err := <-serve:
+		if err != nil {
+			t.Errorf("mote serve: %v, want quiet exit", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("mote serve still running after daemonStop")
+	}
+	select {
+	case err := <-run:
+		if err != nil {
+			t.Fatalf("daemon run: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("daemon still running after daemonStop")
+	}
+}
+
 func TestDaemonIdle(t *testing.T) {
 	// The daemon holds the node open while clients are connected and
 	// exits once it has been idle for daemonIdleTimeout.

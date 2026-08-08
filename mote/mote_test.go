@@ -424,8 +424,10 @@ func TestSSHTransportSessionError(t *testing.T) {
 
 // The gomote mock takes direction from the test environment:
 // $MOTE_TEST_GOMOTE_INST is the instance name to expect (and print
-// from create), $MOTE_TEST_GOMOTE_LIST is the "gomote list" output,
-// and $MOTE_TEST_GOMOTE_GROUPS, if set, means the mote group exists.
+// from create), $MOTE_TEST_GOMOTE_DEAD is a recorded instance that no
+// longer exists, $MOTE_TEST_GOMOTE_NOCREATE means no instance should
+// be created, and $MOTE_TEST_GOMOTE_GROUPS, if set, means the mote
+// group exists.
 func gomoteMockMain() {
 	log.SetPrefix("gomote mock: ")
 	log.SetFlags(0)
@@ -438,8 +440,9 @@ func gomoteMockMain() {
 	}
 	switch os.Args[1] {
 	case "list":
-		fmt.Print(os.Getenv("MOTE_TEST_GOMOTE_LIST"))
-		os.Exit(0)
+		// Mote knows its own instances from what it recorded, and asking
+		// gomote instead would be a network round trip in every command.
+		log.Fatal("gomote list should not be run")
 	case "group":
 		if len(os.Args) == 3 && os.Args[2] == "list" {
 			fmt.Printf("Name\tInstances\t\n")
@@ -460,7 +463,7 @@ func gomoteMockMain() {
 				"gotip-linux-ppc64_power10\n")
 			os.Exit(0)
 		}
-		if os.Getenv("MOTE_TEST_GOMOTE_LIST") != "" {
+		if os.Getenv("MOTE_TEST_GOMOTE_NOCREATE") != "" {
 			log.Fatalf("create called when reuse expected: %v", os.Args)
 		}
 		if os.Getenv("MOTE_TEST_GOMOTE_GROUPS") != "" {
@@ -479,7 +482,15 @@ func gomoteMockMain() {
 		}
 		os.Exit(0)
 	case "put":
-		if len(os.Args) != 4 || os.Args[2] != inst {
+		if len(os.Args) != 4 {
+			log.Fatalf("bad put args: %v", os.Args)
+		}
+		if dead := os.Getenv("MOTE_TEST_GOMOTE_DEAD"); dead != "" && os.Args[2] == dead {
+			// The instance mote recorded has expired since.
+			fmt.Fprintf(os.Stderr, "instance %q does not exist\n", dead)
+			os.Exit(1)
+		}
+		if os.Args[2] != inst {
 			log.Fatalf("bad put args: %v", os.Args)
 		}
 		if _, err := os.Stat(os.Args[3]); err != nil {
@@ -574,6 +585,18 @@ func TestGomoteTransport(t *testing.T) {
 	}
 	defer conn.Close()
 	runConn(t, conn, []string{"echo", "over gomote"}, "over gomote\n")
+	// The instance mote created is written down for the next command.
+	if got := recordedGomote("gotip-linux-amd64"); got != "user-gotip-linux-amd64-0" {
+		t.Errorf("recorded gomote = %q, want user-gotip-linux-amd64-0", got)
+	}
+}
+
+// recordGomote writes the record that makes mote reuse inst for builder.
+func recordGomote(t *testing.T, builder, inst string) {
+	t.Helper()
+	if err := os.WriteFile(gomoteFile(builder), []byte(inst+"\n"), 0o666); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // TestGomoteTransportShell exercises the fallback for gomote commands
@@ -625,18 +648,35 @@ func TestGomoteTransportExistingGroup(t *testing.T) {
 func TestGomoteTransportReuse(t *testing.T) {
 	setupDirs(t)
 	mockPATH(t, "gomote", "go")
-	// One matching instance outside the mote group (must not be reused)
-	// and one inside it.
-	t.Setenv("MOTE_TEST_GOMOTE_LIST",
-		"user-gotip-linux-amd64-3\tgotip-linux-amd64\thost-amd64\texpires in 1h\n"+
-			"user-gotip-linux-amd64-7 (mote, other)\tgotip-linux-amd64\thost-amd64\texpires in 1h\n")
+	// The recorded instance is used as it stands: nothing created.
+	recordGomote(t, "gotip-linux-amd64", "user-gotip-linux-amd64-7")
 	t.Setenv("MOTE_TEST_GOMOTE_INST", "user-gotip-linux-amd64-7")
+	t.Setenv("MOTE_TEST_GOMOTE_NOCREATE", "1")
 	conn, err := dialServer("gomote://gotip-linux-amd64")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer conn.Close()
 	runConn(t, conn, []string{"echo", "over gomote"}, "over gomote\n")
+}
+
+// TestGomoteTransportStale checks that a recorded instance that no
+// longer exists, which the copy of the mote binary is the first to
+// discover, is replaced by a new one.
+func TestGomoteTransportStale(t *testing.T) {
+	setupDirs(t)
+	mockPATH(t, "gomote", "go")
+	recordGomote(t, "gotip-linux-amd64", "user-gotip-linux-amd64-9")
+	t.Setenv("MOTE_TEST_GOMOTE_DEAD", "user-gotip-linux-amd64-9")
+	conn, err := dialServer("gomote://gotip-linux-amd64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	runConn(t, conn, []string{"echo", "over gomote"}, "over gomote\n")
+	if got := recordedGomote("gotip-linux-amd64"); got != "user-gotip-linux-amd64-0" {
+		t.Errorf("recorded gomote = %q, want user-gotip-linux-amd64-0", got)
+	}
 }
 
 func TestCloseSSH(t *testing.T) {
@@ -665,30 +705,52 @@ func TestCloseAll(t *testing.T) {
 	if err := os.WriteFile(sock, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// One gomote instance in the mote group and one outside it,
-	// which must be left alone.
-	t.Setenv("MOTE_TEST_GOMOTE_LIST",
-		"user-gotip-linux-amd64-7 (mote)\tgotip-linux-amd64\thost-amd64\texpires in 1h\n"+
-			"user-gotip-linux-arm64-1\tgotip-linux-arm64\thost-arm64\texpires in 1h\n")
+	// One recorded gomote instance.
+	recordGomote(t, "gotip-linux-amd64", "user-gotip-linux-amd64-7")
 	t.Setenv("MOTE_TEST_GOMOTE_INST", "user-gotip-linux-amd64-7")
 	if err := closeAll(); err != nil {
 		t.Fatalf("closeAll: %v", err)
+	}
+	if _, err := os.Stat(gomoteFile("gotip-linux-amd64")); !os.IsNotExist(err) {
+		t.Errorf("gomote record after closeAll: Stat = %v, want does not exist", err)
+	}
+	// Nothing left to close, and nothing to say about it.
+	if err := closeAll(); err != nil {
+		t.Fatalf("closeAll again: %v", err)
 	}
 }
 
 func TestCloseGomote(t *testing.T) {
 	setupDirs(t)
 	mockPATH(t, "gomote")
-	t.Setenv("MOTE_TEST_GOMOTE_LIST",
-		"user-gotip-linux-amd64-7 (mote)\tgotip-linux-amd64\thost-amd64\texpires in 1h\n")
+	recordGomote(t, "gotip-linux-amd64", "user-gotip-linux-amd64-7")
 	t.Setenv("MOTE_TEST_GOMOTE_INST", "user-gotip-linux-amd64-7")
-	if err := closeGomote(mustParse(t, "gomote://gotip-linux-amd64")); err != nil {
+	if err := closeGomote("gotip-linux-amd64"); err != nil {
 		t.Fatalf("closeGomote: %v", err)
 	}
-	// No instance to destroy is not an error.
-	t.Setenv("MOTE_TEST_GOMOTE_LIST", "")
-	if err := closeGomote(mustParse(t, "gomote://gotip-linux-amd64")); err != nil {
+	// The destroyed instance is forgotten, so a second close finds
+	// nothing to destroy, which is not an error.
+	if _, err := os.Stat(gomoteFile("gotip-linux-amd64")); !os.IsNotExist(err) {
+		t.Errorf("gomote record after closeGomote: Stat = %v, want does not exist", err)
+	}
+	if err := closeGomote("gotip-linux-amd64"); err != nil {
 		t.Fatalf("closeGomote with no instance: %v", err)
+	}
+}
+
+// TestCloseGomoteGone checks that an instance that cannot be destroyed,
+// which usually means it expired on its own, is forgotten all the same:
+// a record kept would fail every close from then on.
+func TestCloseGomoteGone(t *testing.T) {
+	setupDirs(t)
+	mockPATH(t, "gomote")
+	recordGomote(t, "gotip-linux-amd64", "user-gotip-linux-amd64-9")
+	t.Setenv("MOTE_TEST_GOMOTE_INST", "user-gotip-linux-amd64-7") // destroy of -9 fails
+	if err := closeGomote("gotip-linux-amd64"); err == nil {
+		t.Error("closeGomote succeeded, want error")
+	}
+	if _, err := os.Stat(gomoteFile("gotip-linux-amd64")); !os.IsNotExist(err) {
+		t.Errorf("gomote record after failed destroy: Stat = %v, want does not exist", err)
 	}
 }
 

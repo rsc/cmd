@@ -15,7 +15,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
 )
 
@@ -39,16 +38,13 @@ func dialGomote(u *url.URL) (*Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	inst, err := gomoteInstance(builder)
-	if err != nil {
-		return nil, err
-	}
 	bin, err := buildMote(goos, goarch)
 	if err != nil {
 		return nil, err
 	}
 	defer os.RemoveAll(filepath.Dir(bin))
-	if _, err := gomoteOutput(exec.Command("gomote", "put", inst, bin)); err != nil {
+	inst, err := gomoteInstance(builder, bin)
+	if err != nil {
 		return nil, err
 	}
 	conn, cmdErr := gomoteCommand(inst)
@@ -193,70 +189,92 @@ func gomoteBuilder(goos, goarch string) (string, error) {
 	return best, nil
 }
 
-// gomoteInstances returns the gomote instances in the mote group
-// that have the given builder type ("" for all of them).
-func gomoteInstances(builder string) ([]string, error) {
-	out, err := gomoteOutput(exec.Command("gomote", "list"))
-	if err != nil {
-		return nil, err
-	}
-	// Lines look like "name (group1, group2)\tbuilderType\thostType\texpires ...".
-	var insts []string
-	for line := range strings.Lines(string(out)) {
-		f := strings.Split(strings.TrimSuffix(line, "\n"), "\t")
-		if len(f) < 2 || (builder != "" && f[1] != builder) {
-			continue
-		}
-		name, groups, ok := strings.Cut(f[0], " (")
-		if !ok {
-			continue
-		}
-		if slices.Contains(strings.Split(strings.TrimSuffix(groups, ")"), ", "), gomoteGroup) {
-			insts = append(insts, name)
-		}
-	}
-	return insts, nil
+// gomoteFile is the file recording the instance mote created for
+// gomote://builder. Asking gomote itself which instances are mote's
+// means a network round trip on every mote command, so mote writes
+// down the name it created and reads it back instead.
+func gomoteFile(builder string) string {
+	return filepath.Join(configDir(), "gomote-"+builder)
 }
 
-// closeGomote destroys the gomote instances backing gomote://builder.
-func closeGomote(u *url.URL) error {
-	insts, err := gomoteInstances(u.Host)
+// recordedGomote returns the instance recorded for gomote://builder,
+// or "" if there is none. The instance may no longer exist: gomotes
+// expire on their own, and the user can destroy them.
+func recordedGomote(builder string) string {
+	data, err := os.ReadFile(gomoteFile(builder))
 	if err != nil {
-		return err
+		return ""
 	}
-	if len(insts) == 0 {
-		log.Printf("no gomote instance for %s", u.Host)
+	return strings.TrimSpace(string(data))
+}
+
+// gomoteBuilders returns the builders that mote has recorded instances for.
+func gomoteBuilders() []string {
+	var builders []string
+	entries, _ := os.ReadDir(configDir())
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasPrefix(e.Name(), "gomote-") {
+			builders = append(builders, strings.TrimPrefix(e.Name(), "gomote-"))
+		}
+	}
+	return builders
+}
+
+// closeGomote destroys the gomote instance recorded for gomote://builder.
+func closeGomote(builder string) error {
+	inst := recordedGomote(builder)
+	if inst == "" {
+		log.Printf("no gomote instance for %s", builder)
 		return nil
 	}
-	return destroyGomotes(insts)
-}
-
-// destroyGomotes destroys the given gomote instances.
-func destroyGomotes(insts []string) error {
-	for _, inst := range insts {
-		if _, err := gomoteOutput(exec.Command("gomote", "destroy", inst)); err != nil {
-			return err
-		}
-		log.Printf("destroyed gomote %s", inst)
+	// Forget the instance whether or not destroying it works. A destroy
+	// that fails is usually one whose instance has already expired, and
+	// keeping that record would fail every close from here on. The error
+	// names the instance in case it is still out there.
+	os.Remove(gomoteFile(builder))
+	if _, err := gomoteOutput(exec.Command("gomote", "destroy", inst)); err != nil {
+		return err
 	}
+	log.Printf("destroyed gomote %s", inst)
 	return nil
 }
 
-// gomoteInstance returns the name of a gomote instance for the given
-// builder, reusing an instance from the mote group if one is listed
-// and creating one in the mote group otherwise.
-func gomoteInstance(builder string) (string, error) {
-	insts, err := gomoteInstances(builder)
+// gomoteInstance returns a gomote instance for the given builder with
+// the mote binary bin copied onto it, reusing the recorded instance if
+// there is one and creating an instance otherwise.
+//
+// The copy is what proves a recorded instance still exists, because it
+// is the first thing done with the instance: an instance that expired
+// or was destroyed since mote wrote it down fails here, and the record
+// gives way to a new instance.
+func gomoteInstance(builder, bin string) (string, error) {
+	if inst := recordedGomote(builder); inst != "" {
+		_, err := gomoteOutput(exec.Command("gomote", "put", inst, bin))
+		if err == nil {
+			return inst, nil
+		}
+		log.Printf("gomote %s is gone; creating another: %v", inst, err)
+		os.Remove(gomoteFile(builder))
+	}
+	inst, err := createGomote(builder)
 	if err != nil {
 		return "", err
 	}
-	if len(insts) > 0 {
-		return insts[0], nil
+	if _, err := gomoteOutput(exec.Command("gomote", "put", inst, bin)); err != nil {
+		return "", err
 	}
+	return inst, nil
+}
 
+// createGomote creates a gomote instance for the given builder and
+// records it, so that later mote commands reuse it and "mote close"
+// can destroy it.
+func createGomote(builder string) (string, error) {
 	// Create an instance in the mote group.
 	// The -new-group flag creates the group but fails if it exists;
 	// for an existing group, $GOMOTE_GROUP names the group to add to.
+	// The group is for the user's benefit: mote finds its own instances
+	// by the names it records, not by the group.
 	create := exec.Command("gomote", "create", "-new-group="+gomoteGroup, builder)
 	if gomoteGroupExists() {
 		create = exec.Command("gomote", "create", builder)
@@ -269,6 +287,12 @@ func gomoteInstance(builder string) (string, error) {
 	inst := strings.TrimSpace(string(out))
 	if inst == "" {
 		return "", fmt.Errorf("gomote create %s: no instance name in output", builder)
+	}
+	if err := os.WriteFile(gomoteFile(builder), []byte(inst+"\n"), 0o666); err != nil {
+		// The instance is running and will go unrecorded: the next mote
+		// command creates another, and "mote close" cannot destroy this
+		// one. Say so; there is nothing to do but keep using it.
+		log.Printf("recording gomote %s: %v", inst, err)
 	}
 	return inst, nil
 }

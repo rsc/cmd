@@ -10,7 +10,6 @@ import (
 	"log"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 )
 
@@ -48,22 +47,22 @@ func cmdClose(args []string) {
 	default:
 		err = fmt.Errorf("unknown server URL scheme %s://", u.Scheme)
 	case "tcp":
-		err = fmt.Errorf("nothing to close for %s", rawURL)
+		err = errors.New("nothing to close")
 	case "ssh":
 		err = closeSSH(u)
 	case "tail":
 		err = daemonStop(u.Host)
 	case "gomote":
-		err = closeGomote(u)
+		err = closeGomote(u.Host)
 	}
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("close %s: %v", rawURL, err)
 	}
 }
 
 // closeAll shuts down everything mote commands may have left running:
 // every shared ssh connection, every local Tailscale daemon, and every
-// gomote instance in the mote group. It keeps going past failures and
+// gomote instance mote recorded. It keeps going past failures and
 // reports them together at the end.
 func closeAll() error {
 	var errs []error
@@ -77,15 +76,15 @@ func closeAll() error {
 	}
 	for _, name := range tailNames() {
 		if err := daemonStop(name); err != nil {
-			errs = append(errs, err)
+			errs = append(errs, fmt.Errorf("close tail://%s: %v", name, err))
 		}
 	}
-	if _, err := exec.LookPath("gomote"); err == nil {
-		insts, err := gomoteInstances("")
-		if err != nil {
-			errs = append(errs, err)
-		} else if err := destroyGomotes(insts); err != nil {
-			errs = append(errs, err)
+	// Only the recorded instances, so that a machine that has never used
+	// gomote runs no gomote command at all: they are slow, because every
+	// one of them is a network round trip.
+	for _, builder := range gomoteBuilders() {
+		if err := closeGomote(builder); err != nil {
+			errs = append(errs, fmt.Errorf("close gomote://%s: %v", builder, err))
 		}
 	}
 	return errors.Join(errs...)
