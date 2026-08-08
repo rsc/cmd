@@ -97,8 +97,6 @@
         <span class="when">{{since .Created}}</span>
         {{if .Draft}}
         <span class="draftactions">
-          <button class="linkish small" hx-get="/{{$.Repo}}/f/editform?comment={{.ID}}"
-                  hx-target="closest .comment" hx-swap="outerHTML">Edit</button>
           <button class="linkish small danger" hx-post="/{{$.Repo}}/f/delete?comment={{.ID}}"
                   hx-target="closest .thread" hx-swap="outerHTML"
                   hx-confirm="Delete this draft comment?">Delete</button>
@@ -110,7 +108,12 @@
     {{end}}
   </div>
   <div class="threadactions">
+    {{if .Thread.Draft}}
+    <button class="edit" hx-get="/{{.Repo}}/f/editform?comment={{.Thread.Draft.ID}}"
+            hx-target="#comment-{{.Thread.Draft.ID}}" hx-swap="outerHTML">Edit</button>
+    {{else}}
     <button class="reply" hx-get="/{{.Repo}}/f/form?thread={{.Thread.ID}}" hx-target="closest .thread" hx-swap="beforeend">Reply</button>
+    {{end}}
     <button class="resolve" hx-post="/{{.Repo}}/f/resolve?thread={{.Thread.ID}}" hx-target="closest .thread" hx-swap="outerHTML">
       {{if .Thread.Resolved}}Unresolve{{else}}Resolve{{end}}
     </button>

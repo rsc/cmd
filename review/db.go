@@ -160,6 +160,16 @@ type Thread struct {
 // Unresolved reports whether the thread still needs attention.
 func (t *Thread) Unresolved() bool { return !t.Resolved }
 
+// Draft returns the thread's last comment if it is still unpublished,
+// which is the one to offer to edit: replying to your own unsent draft
+// is not what you meant to do.
+func (t *Thread) Draft() *Comment {
+	if n := len(t.Comments); n > 0 && t.Comments[n-1].Draft {
+		return t.Comments[n-1]
+	}
+	return nil
+}
+
 // Where names the place a thread is attached to, for display away from
 // the diff itself.
 func (t *Thread) Where() string {
