@@ -463,6 +463,10 @@ tr.threadrow td.threadcell {
 .linkish.small.danger { color: var(--red-700); }
 
 .threadactions { display: flex; gap: 6px; margin-top: 6px; }
+/* While a draft is being edited, the thread's own actions are worse than
+ * useless: Edit would target a comment that is now a form, and Resolve
+ * would close the thread and throw the edit away. */
+.thread:has(form.editform) .threadactions { display: none; }
 .threadactions button { font-size: 12px; padding: 3px 9px; }
 
 /* What is left where a deleted draft was, until the page is reloaded or
