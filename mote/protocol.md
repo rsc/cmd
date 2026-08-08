@@ -43,8 +43,8 @@ responses. The JSON sections correspond to these Go structs:
 The request types are Setup, Upload, Start, and Kill.
 The response types are Info, Need, Ready, Output, and Exit.
 The Tailscale daemon, described at the end of this file, adds the
-request types Dial and Serve and the response types Connected,
-Serving, and Log.
+request types Dial, Serve, and Stop and the response types Connected,
+Serving, Log, and Stopping.
 
 Any response may set Error, which the client reports as a fatal error.
 A server that cannot continue (a failed upload, a command that cannot
@@ -234,8 +234,10 @@ directions between the client and the tailnet, and the client speaks
 the protocol above through it to the remote server.
 
 A request of type Stop (sent by “mote close”) asks the daemon to shut
-down. The daemon answers with a response of type Stopping and then
-exits, cutting off any other connected clients.
+down. The daemon answers with a response of type Stopping, stops
+accepting connections, and hangs up on any registered server (see
+below). Connections already proxying bytes are left to finish, and the
+daemon exits once they have.
 
 A server sends a request of type Serve, with Env set to the
 environment its commands should run with. The daemon starts listening
@@ -245,5 +247,9 @@ output — Tailscale's messages and any session errors — to the mote
 server as responses of type Log whose binary sections are the text to
 print. Only one server may be registered at a time; a second Serve is
 refused with Error set. When the mote server hangs up, the daemon
-stops listening; sessions already running are left to finish.
+stops listening; sessions already running are left to finish. A
+stopping daemon ends the registration from its side instead, sending
+the server a response of type Stopping and hanging up: the server is
+parked reading and would otherwise wait forever, as would the daemon,
+which does not exit until its clients are gone.
 

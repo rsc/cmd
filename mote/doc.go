@@ -260,12 +260,14 @@ If the gomote command is found on the PATH, mote can use these servers.
 To run a remote command:
 
 	% mote @gomote://gotip-linux-amd64 hostname
-	TODO
+	golang-ciw-n1-linux-x86-bullseye-us-west1-b-92-zgy0
 	%
 
 (If you haven't used gomote recently, you may need to run “gomote login” first.)
 
 The mote client installs and starts the mote server after creating the gomote.
+It writes down the instance it created and reuses it for later commands,
+creating another if that one has expired or been destroyed.
 
 If the gomote command is found on the PATH, mote creates GOOS-GOARCH aliases
 backed by gomotes as needed. For example:
@@ -313,6 +315,9 @@ of the user configuration directory. For example:
 In that directory:
 
   - aliases.txt contains the alias definitions, one alias per line.
+  - gomote-builder holds the name of the gomote instance created for
+    gomote://builder, so that later commands reuse the instance and
+    “mote close” can destroy it.
   - password.txt contains the passwords shared with tcp:// servers,
     as written by “mote login”: one line per server, holding the server
     URL and then the password, separated by a space.

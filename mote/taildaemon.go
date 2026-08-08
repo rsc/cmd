@@ -207,19 +207,20 @@ func daemonDial(name, addr string) (io.ReadWriteCloser, error) {
 func daemonStop(name string) error {
 	conn, err := net.Dial("unix", servicePath(name))
 	if err != nil {
-		log.Printf("tailscale daemon for mote-%s not running", name)
-		return nil
+		return nil // no daemon to stop, which is not worth saying
 	}
 	defer conn.Close()
 	c := newConn(conn)
 	if err := c.writePacket(&Request{Type: "Stop"}, nil); err != nil {
-		return fmt.Errorf("stopping Tailscale daemon: %v", err)
+		return err
 	}
 	var resp Response
 	if _, err := c.readPacket(&resp); err != nil {
-		return fmt.Errorf("stopping Tailscale daemon: %v", err)
+		return err
 	}
 	if resp.Error != "" {
+		// A daemon older than "mote close" does not know the Stop
+		// request and answers with an error saying so.
 		return errors.New(resp.Error)
 	}
 	if resp.Type != "Stopping" {
@@ -231,7 +232,8 @@ func daemonStop(name string) error {
 
 // daemonServe asks the daemon for the named local node to serve the
 // tailnet, and prints the daemon's log output until the connection ends.
-// Hanging up tells the daemon to stop serving.
+// Hanging up tells the daemon to stop serving; the daemon being stopped
+// by "mote close" ends the connection from the other side.
 func daemonServe(name string) error {
 	conn, err := daemonConn(name)
 	if err != nil {
@@ -258,6 +260,9 @@ func daemonServe(name string) error {
 			log.Printf("serving tail://%s", name)
 		case "Log":
 			os.Stderr.Write(data)
+		case "Stopping":
+			// The daemon is shutting down, and has already logged why.
+			return nil
 		}
 	}
 }
@@ -273,11 +278,11 @@ type daemon struct {
 
 	wg sync.WaitGroup // connected clients, waited for before run returns
 
-	mu      sync.Mutex
-	active  int          // connected clients, including any mote serve
-	serving bool         // a mote serve is registered
-	idle    *time.Timer  // fires when active has been zero for daemonIdleTimeout
-	svc     net.Listener // the service socket, closed to stop the daemon
+	mu        sync.Mutex
+	active    int          // connected clients, including any mote serve
+	serveConn net.Conn     // the registered mote serve, nil if none
+	idle      *time.Timer  // fires when active has been zero for daemonIdleTimeout
+	svc       net.Listener // the service socket, closed to stop the daemon
 }
 
 // cmdTailDaemon implements the hidden "mote tail-daemon name" command,
@@ -375,7 +380,21 @@ func (d *daemon) run() error {
 }
 
 // stop shuts the daemon down, idle or not.
-func (d *daemon) stop() { d.svc.Close() }
+//
+// Closing the service socket is not enough: a registered mote server is
+// parked reading from its connection, waiting for sessions that will
+// never come now, and run does not return until its clients are gone.
+// So the daemon tells that server it is stopping and hangs up on it.
+func (d *daemon) stop() {
+	d.svc.Close()
+	d.mu.Lock()
+	conn := d.serveConn
+	d.mu.Unlock()
+	if conn != nil {
+		d.log.stopServing()
+		conn.Close()
+	}
+}
 
 // listenService binds the daemon's service socket, first removing a
 // socket left behind by a daemon that died. Removing it is safe because
@@ -488,7 +507,7 @@ func (d *daemon) dial(c *Conn, conn net.Conn, req *Request) {
 func (d *daemon) serve(c *Conn, conn net.Conn, req *Request) {
 	defer conn.Close()
 	d.mu.Lock()
-	if d.serving {
+	if d.serveConn != nil {
 		d.mu.Unlock()
 		c.writePacket(&Response{Type: "Error", Error: fmt.Sprintf("already serving tail://%s", d.name)}, nil)
 		return
@@ -499,12 +518,12 @@ func (d *daemon) serve(c *Conn, conn net.Conn, req *Request) {
 		c.writePacket(&Response{Type: "Error", Error: err.Error()}, nil)
 		return
 	}
-	d.serving = true
+	d.serveConn = conn // so that stop can hang up on it
 	d.mu.Unlock()
 
 	defer func() {
 		d.mu.Lock()
-		d.serving = false
+		d.serveConn = nil
 		d.mu.Unlock()
 		ln.Close()
 		d.log.detach(c)
@@ -553,6 +572,19 @@ func (l *logFanout) attach(c *Conn) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.c = c
+}
+
+// stopServing tells the attached mote server that the daemon is going
+// away, so that it can exit without reporting a hangup. The packet goes
+// out under the same lock as the log output, which is written from the
+// daemon's own goroutines, so that it cannot land inside a log line.
+func (l *logFanout) stopServing() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.c != nil {
+		l.c.writePacket(&Response{Type: "Stopping"}, nil)
+		l.c = nil
+	}
 }
 
 func (l *logFanout) detach(c *Conn) {
