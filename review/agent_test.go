@@ -47,6 +47,8 @@ func TestSkillPrint(t *testing.T) {
 		// that the context is the older text, which are the two things
 		// an agent gets wrong if it is not told.
 		"written at line N",
+		// And in what order to work through a stack of commits.
+		"from the oldest to the newest",
 		"now gone",
 		"text as the reviewer saw it",
 		"current_line",
