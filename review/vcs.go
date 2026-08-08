@@ -26,6 +26,11 @@ const WorkingRev = "working"
 // emptyTree is git's hash of the empty tree, used as the base of a root commit.
 const emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
+// pinRef is the ref namespace holding snapshot pins. It is deliberately
+// not refs/review, which reads too much like jj-codereview's
+// refs/remotes/review labels for its patch sets.
+const pinRef = "refs/reviewed/"
+
 // zeroID is jj's commit ID for the virtual root commit.
 const zeroID = "0000000000000000000000000000000000000000"
 
