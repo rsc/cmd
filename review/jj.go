@@ -130,7 +130,7 @@ func (r *jjRepo) Pin(name, rev string) error {
 	if err != nil {
 		return err
 	}
-	_, err = run(r.root, "git", "--git-dir="+dir, "update-ref", "refs/review/"+name, rev)
+	_, err = run(r.root, "git", "--git-dir="+dir, "update-ref", pinRef+name, rev)
 	return err
 }
 

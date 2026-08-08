@@ -137,7 +137,7 @@ the newest snapshot. Both marks appear in the change list as chips.
 
 Because an amended commit is no longer reachable, git is free to garbage
 collect it and break an old snapshot. Grabbing a snapshot therefore also
-writes a ref under refs/review to pin the commit. This is the only change
+writes a ref under refs/reviewed to pin the commit. This is the only change
 review makes to a repository; the -nopin flag disables it, at the cost of
 snapshots that can rot. In a jj repository the ref goes into the git
 store backing the repo, which works whether or not the repo is colocated.
