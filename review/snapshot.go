@@ -5,6 +5,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"strconv"
 )
@@ -71,9 +72,21 @@ func (r *Review) EnsureSnapshot(c *Change) ([]*Snapshot, error) {
 // has not moved since the last snapshot, it reports created=false and
 // returns that snapshot unchanged, so that grabbing twice is harmless.
 func (r *Review) Grab(c *Change) (s *Snapshot, created bool, err error) {
+	before, err := r.DB.Snapshots(r.Root(), c.Key)
+	if err != nil {
+		return nil, false, err
+	}
 	s, created, err = r.DB.AddSnapshot(r.Root(), c)
-	if err != nil || !created || !r.Pin {
+	if err != nil || !created {
 		return s, created, err
+	}
+	if n := len(before); n > 0 {
+		if err := r.carryReviewed(before[n-1], s, c); err != nil {
+			return s, created, err
+		}
+	}
+	if !r.Pin {
+		return s, created, nil
 	}
 	// Pin the commit so that amending the change away does not let the
 	// snapshot's commit be garbage collected out from under the comments.
@@ -81,6 +94,50 @@ func (r *Review) Grab(c *Change) (s *Snapshot, created bool, err error) {
 		return s, created, fmt.Errorf("recording snapshot %d: %v", s.N, err)
 	}
 	return s, created, nil
+}
+
+// carryReviewed marks in the new snapshot every file that was marked in
+// the one before it and has not changed since. A new snapshot usually
+// touches one or two files, and asking for the whole change to be read
+// again because of that would make the marks worthless.
+//
+// Only files whose contents are identical carry over: a file that moved
+// is a file to look at again, and the marks on the snapshot itself never
+// carry, since they are a verdict on a state that no longer exists.
+func (r *Review) carryReviewed(prev, next *Snapshot, c *Change) error {
+	marks, err := r.DB.Reviewed(prev.ID)
+	if err != nil || len(marks) == 0 {
+		return err
+	}
+
+	changed, err := r.Repo.Files(prev.Rev, next.Rev)
+	if err != nil {
+		// Without knowing what changed, carrying nothing is the safe
+		// answer: it asks for another look rather than skipping one.
+		return nil
+	}
+	moved := map[string]bool{}
+	for _, f := range changed {
+		moved[f.Path] = true
+		if f.OldPath != "" {
+			moved[f.OldPath] = true
+		}
+	}
+	// The commit message is not one of the repository's files, so compare
+	// it as it is rendered, which takes in the parent and author too.
+	if !bytes.Equal(commitMsgContent(prev.Change()), commitMsgContent(c)) {
+		moved[CommitMsgFile] = true
+	}
+
+	for file := range marks {
+		if moved[file] {
+			continue
+		}
+		if err := r.DB.SetReviewed(next.ID, file, true); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // A View is a diff of one change between two revisions: a target snapshot

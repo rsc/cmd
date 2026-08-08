@@ -293,3 +293,102 @@ func TestGrabPinsCommit(t *testing.T) {
 		t.Errorf("base rev = %q, want %q", v.BaseRev, old)
 	}
 }
+
+// TestCarryReviewedForward checks that marking a file reviewed survives a
+// new snapshot when that file did not change, and does not when it did.
+func TestCarryReviewedForward(t *testing.T) {
+	r, dir := newReview(t)
+	write(t, dir, "stable.go", "package p\n\nfunc Stable() {}\n")
+	write(t, dir, "moving.go", "package p\n\nfunc Moving() int { return 1 }\n")
+	do(t, dir, "git", "add", ".")
+	do(t, dir, "git", "commit", "-q", "-m", "p: add two files\n\nChange-Id: Icarry\n")
+
+	changes, _ := r.Repo.Changes()
+	snaps, err := r.EnsureSnapshot(changes[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	s1 := snaps[0]
+
+	// Read everything, then let one file move underneath.
+	for _, f := range []string{"stable.go", "moving.go", CommitMsgFile} {
+		if err := r.DB.SetReviewed(s1.ID, f, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(t, dir, "moving.go", "package p\n\nfunc Moving() int { return 42 }\n")
+	do(t, dir, "git", "add", ".")
+	do(t, dir, "git", "commit", "-q", "--amend", "--no-edit")
+
+	changes, _ = r.Repo.Changes()
+	s2, created, err := r.Grab(changes[0])
+	if err != nil || !created {
+		t.Fatalf("grab = %+v, created=%v, err=%v", s2, created, err)
+	}
+
+	got, err := r.DB.Reviewed(s2.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got["stable.go"] {
+		t.Error("an unchanged file lost its reviewed mark")
+	}
+	if got["moving.go"] {
+		t.Error("a changed file kept its reviewed mark")
+	}
+	// The message did not change, so its mark carries too.
+	if !got[CommitMsgFile] {
+		t.Error("an unchanged commit message lost its reviewed mark")
+	}
+	// The snapshot's own mark is a verdict on a state that is gone.
+	if ok, _ := r.DB.SnapshotReviewed(s2.ID); ok {
+		t.Error("the snapshot itself was marked reviewed")
+	}
+
+	// Rewording the message alone unmarks it, and leaves the files alone.
+	if err := r.DB.SetReviewed(s2.ID, "moving.go", true); err != nil {
+		t.Fatal(err)
+	}
+	do(t, dir, "git", "commit", "-q", "--amend", "-m", "p: add two files, reworded\n\nChange-Id: Icarry\n")
+	changes, _ = r.Repo.Changes()
+	s3, created, err := r.Grab(changes[0])
+	if err != nil || !created {
+		t.Fatalf("grab = %+v, created=%v, err=%v", s3, created, err)
+	}
+	got, _ = r.DB.Reviewed(s3.ID)
+	if got[CommitMsgFile] {
+		t.Error("a reworded commit message kept its reviewed mark")
+	}
+	for _, f := range []string{"stable.go", "moving.go"} {
+		if !got[f] {
+			t.Errorf("%s changed only in the message but lost its mark", f)
+		}
+	}
+}
+
+// TestCarryReviewedAcrossRename checks that a file that moved is offered
+// for reading again rather than inheriting the mark from its old path.
+func TestCarryReviewedAcrossRename(t *testing.T) {
+	r, dir := newReview(t)
+	write(t, dir, "old.go", "package p\n\nfunc F() {}\n")
+	do(t, dir, "git", "add", ".")
+	do(t, dir, "git", "commit", "-q", "-m", "p: add old.go\n\nChange-Id: Irename\n")
+
+	changes, _ := r.Repo.Changes()
+	snaps, _ := r.EnsureSnapshot(changes[0])
+	if err := r.DB.SetReviewed(snaps[0].ID, "old.go", true); err != nil {
+		t.Fatal(err)
+	}
+
+	do(t, dir, "git", "mv", "old.go", "new.go")
+	do(t, dir, "git", "commit", "-q", "--amend", "--no-edit")
+	changes, _ = r.Repo.Changes()
+	s2, _, err := r.Grab(changes[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := r.DB.Reviewed(s2.ID)
+	if got["new.go"] || got["old.go"] {
+		t.Errorf("a renamed file carried its mark: %v", got)
+	}
+}
