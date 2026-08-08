@@ -16,6 +16,10 @@
   <a class="repo" href="{{.RepoURL}}" title="{{.RepoPath}}">{{.Repo}}</a>
   <span class="chip kind">{{.Kind}}</span>
   {{end}}
+  {{if .FileName}}
+  <span class="sep">/</span>
+  <span class="file" title="{{.FileName}}">{{.FileName}}</span>
+  {{end}}
   <span class="spacer"></span>
   <input id="search" class="search" type="search" placeholder="Filter (/)" autocomplete="off" spellcheck="false">
   <button id="helpbutton" class="linkish" title="Keyboard shortcuts">?</button>

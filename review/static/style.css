@@ -189,6 +189,16 @@ tr.item:hover > td { background: var(--gray-50); }
 
 .topbar .sep { color: var(--gray-500); }
 .topbar a.repo { color: var(--gray-900); }
+.topbar .file {
+	font-family: var(--mono);
+	font-size: 12px;
+	color: var(--gray-900);
+	font-weight: 500;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	max-width: 40em;
+}
 
 .repolist { margin-top: 28px; border-top: var(--border); padding-top: 12px; }
 .repolist ul { list-style: none; margin: 0; padding: 0; }
@@ -219,6 +229,30 @@ button.reviewed.lgtm { font-size: 13px; padding: 5px 12px; color: var(--gerrit-b
 button.reviewed.lgtm:hover { background: var(--blue-50); color: var(--blue-700); border-color: var(--blue-700); }
 button.reviewed.lgtm.on { background: var(--blue-700); border-color: var(--blue-700); color: #fff; }
 button.reviewed.lgtm.on:hover { background: var(--gerrit-blue-light); }
+
+.commitmsg {
+	border: var(--border);
+	border-radius: 4px;
+	background: var(--gray-50);
+	padding: 10px 12px;
+	margin-bottom: 12px;
+}
+.commitmsg pre {
+	margin: 0;
+	font-family: var(--mono);
+	font-size: 12px;
+	line-height: 18px;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+.commitmsg summary {
+	cursor: pointer;
+	color: var(--gerrit-blue-light);
+	font-family: var(--font);
+	font-size: 12px;
+	margin-top: 6px;
+}
+.commitmsg details[open] summary { margin-bottom: 6px; }
 
 /* ---- base selector and snapshot timeline ---- */
 

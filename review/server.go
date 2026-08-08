@@ -289,6 +289,7 @@ type head struct {
 	Repo     string // short name, empty on the all-repositories page
 	RepoPath string
 	RepoURL  string
+	FileName string // the file being viewed, for the top bar
 	Kind     string
 	User     string
 }
@@ -405,6 +406,23 @@ func (s *server) all(w http.ResponseWriter, req *http.Request) error {
 	return tmpl.ExecuteTemplate(w, "all.html", p)
 }
 
+// messageLines is how much of a commit message the change page shows
+// before folding the rest away.
+const messageLines = 10
+
+// splitMessage divides a commit message into the part to show and the
+// part to fold away, and reports how many lines were folded.
+func splitMessage(msg string) (head, rest string, more int) {
+	msg = strings.TrimRight(msg, "\n")
+	lines := strings.Split(msg, "\n")
+	if len(lines) <= messageLines {
+		return msg, "", 0
+	}
+	return strings.Join(lines[:messageLines], "\n"),
+		strings.Join(lines[messageLines:], "\n"),
+		len(lines) - messageLines
+}
+
 // changeInfo gathers the counts shown beside a change in either list.
 func (s *server) changeInfo(r *Review, c *Change) (*changeInfo, error) {
 	info := &changeInfo{Change: c}
@@ -478,13 +496,16 @@ type filesPage struct {
 	head
 	*View
 	nav
-	Files      []*fileInfo
-	Reviewed   map[int64]bool // snapshots marked reviewed, by snapshot ID
-	LGTM       bool           // the snapshot being viewed is marked LGTM
-	Threads    []*threadFrag  // comment history, oldest first
-	Comments   int
-	Unresolved int
-	Drafts     int
+	MessageHead string // the first messageLines lines of the commit message
+	MessageRest string // the rest of it, empty when there is no more
+	MoreLines   int
+	Files       []*fileInfo
+	Reviewed    map[int64]bool // snapshots marked reviewed, by snapshot ID
+	LGTM        bool           // the snapshot being viewed is marked LGTM
+	Threads     []*threadFrag  // comment history, oldest first
+	Comments    int
+	Unresolved  int
+	Drafts      int
 }
 
 func (s *server) view(req *http.Request, r *Review) (*Change, *View, error) {
@@ -546,6 +567,7 @@ func (s *server) files(w http.ResponseWriter, req *http.Request, r *Review) erro
 			return err
 		}
 	}
+	p.MessageHead, p.MessageRest, p.MoreLines = splitMessage(c.Message)
 	p.Drafts = countDrafts(threads)
 
 	// The comment history reads chronologically, not in file order the
@@ -774,6 +796,9 @@ func (s *server) diff(w http.ResponseWriter, req *http.Request, r *Review) error
 		Drafts:   countDrafts(threads),
 	}
 	p.SelfURL = s.diffURL(r, c.Key, name, base, target)
+	// The top bar stays put while the diff scrolls, so naming the file
+	// there answers "what am I looking at" without scrolling back up.
+	p.FileName = p.File.Name()
 	p.Rows = s.renderRows(r, rows, p, leftAt, rightAt)
 
 	// Neighbouring files, for the ] and [ shortcuts and the J/K jumps.
