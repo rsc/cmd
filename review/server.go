@@ -466,6 +466,7 @@ type fileInfo struct {
 	Comments   int
 	Unresolved int
 	Reviewed   bool
+	RebaseOnly bool // nothing in this file's diff was done by this change
 	URL        string
 	InlineURL  string // the same diff as a fragment, for the file list
 }
@@ -538,6 +539,11 @@ func (s *server) files(w http.ResponseWriter, req *http.Request, r *Review) erro
 		}
 	}
 
+	rebaseOnly, err := r.RebaseOnly(v)
+	if err != nil {
+		return err
+	}
+
 	base, target := req.FormValue("base"), req.FormValue("s")
 	p := &filesPage{
 		head: s.head(r, c.Subject, "files"),
@@ -550,10 +556,11 @@ func (s *server) files(w http.ResponseWriter, req *http.Request, r *Review) erro
 	}
 	for _, f := range v.Files {
 		info := &fileInfo{
-			File:      f,
-			Reviewed:  reviewed[f.Path],
-			URL:       s.diffURL(r, c.Key, f.Path, base, target),
-			InlineURL: s.inlineURL(r, c.Key, f.Path, base, target),
+			File:       f,
+			Reviewed:   reviewed[f.Path],
+			RebaseOnly: rebaseOnly[f.Path],
+			URL:        s.diffURL(r, c.Key, f.Path, base, target),
+			InlineURL:  s.inlineURL(r, c.Key, f.Path, base, target),
 		}
 		for _, t := range threads {
 			if t.File != f.Path {
@@ -711,6 +718,9 @@ func sideClass(r *renderRow, name string, changed bool) string {
 	if r.NoIntraline {
 		c += " nointra"
 	}
+	if r.Rebased {
+		c += " rebased"
+	}
 	return c
 }
 
@@ -725,6 +735,7 @@ type diffPage struct {
 	Context   int
 	TabSize   int
 	Binary    bool
+	Rebased   bool // some row's edit came along with a rebase
 	Prev      *fileInfo
 	Next      *fileInfo
 	FilesURL  string
@@ -793,6 +804,7 @@ func (s *server) diff(w http.ResponseWriter, req *http.Request, r *Review) error
 	newLines, _ := splitLines(new)
 
 	fd := Diff(old, new)
+	r.MarkInherited(v, f, fd.Rows)
 	rows := Collapse(fd.Rows, o.context)
 	if o.unified {
 		rows = Unified(rows)
@@ -814,6 +826,7 @@ func (s *server) diff(w http.ResponseWriter, req *http.Request, r *Review) error
 		Context:  o.context,
 		TabSize:  o.tabSize,
 		Binary:   fd.Binary,
+		Rebased:  AnyRebased(fd.Rows),
 		Stale:    append(append([]*Thread{}, leftAt[0]...), rightAt[0]...),
 		FilesURL: s.filesURL(r, c.Key, base, target),
 		Drafts:   countDrafts(threads),
@@ -1015,6 +1028,7 @@ func (s *server) inline(w http.ResponseWriter, req *http.Request, r *Review) err
 	newLines, _ := splitLines(new)
 
 	fd := Diff(old, new)
+	r.MarkInherited(v, f, fd.Rows)
 	rows := Collapse(fd.Rows, p.Context)
 	if p.Unified {
 		rows = Unified(rows)

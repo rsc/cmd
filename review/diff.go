@@ -206,6 +206,12 @@ type Row struct {
 	// them to help, or the line has no counterpart at all.
 	NoIntraline bool
 
+	// Rebased reports that this row's edit was inherited rather than made
+	// by the change being viewed: the same edit appears in the diff of the
+	// two sides' parent commits. Gerrit calls such a region "due to rebase"
+	// and paints it in muted colors. See MarkRebased.
+	Rebased bool
+
 	// For RowSkip: how many unchanged lines are hidden, and the
 	// 1-based line numbers they start at on each side.
 	Count        int
@@ -325,6 +331,93 @@ func chunkRows(del, ins []string, a0, b0 int) []Row {
 		})
 	}
 	return rows
+}
+
+// MarkRebased marks the rows whose edit also appears in the diff of the two
+// sides' parent commits, oldParent and newParent. When a commit lower in a
+// stack is edited, rebasing carries its edits into every commit above it, so
+// they turn up in those commits' own snapshot-to-snapshot diffs even though
+// those commits did not make them. Those are exactly the edits that repeat
+// between the two diffs.
+//
+// Edits are matched by the text they remove and add rather than by position,
+// because the change's own edits shift the line numbers on one side and not
+// the other. An edit that draws inherited and new lines into a single chunk
+// matches nothing and stays unmarked, which errs toward showing a line as the
+// change's own work rather than muting one that is.
+func MarkRebased(rows []Row, oldParent, newParent []byte) {
+	if len(rows) == 0 || bytes.Equal(oldParent, newParent) {
+		return
+	}
+	if isBinary(oldParent) || isBinary(newParent) {
+		return
+	}
+	inherited := make(map[string]int)
+	eachChunk(Diff(oldParent, newParent).Rows, func(c []Row) {
+		inherited[chunkKey(c)]++
+	})
+	if len(inherited) == 0 {
+		return
+	}
+	// Each inherited edit accounts for one edit here, so that a file with
+	// two identical edits, only one of which came from below, keeps the
+	// other one marked as this change's own.
+	eachChunk(rows, func(c []Row) {
+		k := chunkKey(c)
+		if inherited[k] == 0 {
+			return
+		}
+		inherited[k]--
+		for i := range c {
+			c[i].Rebased = true
+		}
+	})
+}
+
+// AnyRebased reports whether any row is inherited from a rebase.
+func AnyRebased(rows []Row) bool {
+	for _, r := range rows {
+		if r.Rebased {
+			return true
+		}
+	}
+	return false
+}
+
+// eachChunk calls f on each maximal run of changed rows.
+func eachChunk(rows []Row, f func([]Row)) {
+	for i := 0; i < len(rows); {
+		if rows[i].Kind == RowEqual || rows[i].Kind == RowSkip {
+			i++
+			continue
+		}
+		j := i
+		for j < len(rows) && rows[j].Kind != RowEqual && rows[j].Kind != RowSkip {
+			j++
+		}
+		f(rows[i:j])
+		i = j
+	}
+}
+
+// chunkKey identifies an edit by the text it removes and the text it adds,
+// so that the same edit is recognized wherever in the file it lands.
+func chunkKey(rows []Row) string {
+	var b strings.Builder
+	for _, r := range rows {
+		if r.L.Num > 0 {
+			b.WriteString(r.L.Text)
+			b.WriteByte('\n')
+		}
+	}
+	b.WriteByte(0)
+	for _, r := range rows {
+		if r.R.Num > 0 {
+			b.WriteString(r.R.Text)
+			b.WriteByte('\n')
+		}
+	}
+	return b.String()
 }
 
 // intraline computes the changed byte ranges within a pair of lines.
@@ -463,12 +556,12 @@ func Unified(rows []Row) []Row {
 		}
 		for _, r := range rows[i:j] {
 			if r.Kind == RowReplace || r.Kind == RowDelete {
-				out = append(out, Row{Kind: RowDelete, L: r.L, Total: r.Total, NoIntraline: r.NoIntraline})
+				out = append(out, Row{Kind: RowDelete, L: r.L, Total: r.Total, NoIntraline: r.NoIntraline, Rebased: r.Rebased})
 			}
 		}
 		for _, r := range rows[i:j] {
 			if r.Kind == RowReplace || r.Kind == RowInsert {
-				out = append(out, Row{Kind: RowInsert, R: r.R, Total: r.Total, NoIntraline: r.NoIntraline})
+				out = append(out, Row{Kind: RowInsert, R: r.R, Total: r.Total, NoIntraline: r.NoIntraline, Rebased: r.Rebased})
 			}
 		}
 		i = j
