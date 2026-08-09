@@ -54,6 +54,10 @@ func TestSkillPrint(t *testing.T) {
 		"written at line N",
 		// And in what order to work through a stack of commits.
 		"from the oldest to the newest",
+		// And how to make a fix in jj so that a wrong one can be dropped
+		// without going through the operation log.
+		"jj squash",
+		`Not "jj edit K".`,
 		"now gone",
 		"text as the reviewer saw it",
 		"current_line",

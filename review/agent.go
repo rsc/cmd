@@ -53,6 +53,24 @@ The loop:
  2. Fix what each thread asks for, editing the code as you normally would.
     Amending the commit is expected; comments survive it.
 
+    In a jj repository, make the fix in a new commit on top of the one it
+    belongs to, and fold it in once it is right:
+
+        jj new K          # K is the change the comment is on
+        ... edit files ...
+        jj squash         # fold the fix into K
+
+    Not "jj edit K". That makes K itself the working copy and rewrites it
+    with every file you save, so a fix that turns out wrong has to be
+    dug back out of the operation log. With "jj new" the fix sits in a
+    commit of its own until you squash it, and abandoning it costs one
+    command:
+
+        jj abandon        # throw the fix away, K untouched
+
+    Squashing rebases whatever is stacked above K, which was going to
+    happen anyway, and K keeps its change ID, so its comments stay put.
+
     Work through the commits from the oldest to the newest, not in the
     order the comments happen to be printed in. Later commits are stacked
     on the ones before them, so a fix to an early commit is rebased
