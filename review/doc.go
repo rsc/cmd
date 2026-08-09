@@ -10,6 +10,7 @@ and answer the resulting comments from the command line.
 Usage:
 
 	review [-a addr] [-n]
+	review add [-from name] [-s n] change file[:line] [text]
 	review comments [-json] [-all] [-drafts] [-s n] [-c n] [change]
 	review publish [change]
 	review reply [-from name] [-resolve] thread [text]
@@ -228,6 +229,16 @@ recorded as not coming from the reviewer, so the web interface can draw
 them differently, and are attributed to "agent" unless -from gives another
 name. They are published immediately, since an agent has no publish step.
 Omitting the text reads it from standard input.
+
+	review add I8d4c2f header.go:42 'This drops the error from Close.'
+
+starts a thread instead of answering one, which is what the reviewer does
+by clicking a line number in the web interface. It is for an agent asked
+to review the code rather than to answer comments on it. The line number
+may be left off to comment on the file as a whole, and the file may be
+/COMMIT_MSG. The comment lands on the newest snapshot unless -s names an
+earlier one, and like a reply it is published at once and attributed to
+"agent" unless -from says otherwise.
 
 The intended loop is that the agent reads the comments, fixes what it can,
 replies and resolves the trivial ones, and leaves the rest; then the human
