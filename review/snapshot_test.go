@@ -5,6 +5,7 @@
 package main
 
 import (
+	"slices"
 	"testing"
 )
 
@@ -390,5 +391,115 @@ func TestCarryReviewedAcrossRename(t *testing.T) {
 	got, _ := r.DB.Reviewed(s2.ID)
 	if got["new.go"] || got["old.go"] {
 		t.Errorf("a renamed file carried its mark: %v", got)
+	}
+}
+
+// topChangeKey identifies the upper change built by newStackedReview.
+const topChangeKey = "Ideadbeef02"
+
+// newStackedReview builds two stacked changes, snapshots them, then edits
+// the lower one and rebases the upper one onto it, amending that too, and
+// snapshots again. The upper change's snapshot 1 to snapshot 2 diff then
+// mixes an edit it made itself, in shared.txt, with two it did not: the
+// rest of shared.txt and the whole of deep.txt.
+func newStackedReview(t *testing.T) (*Review, string) {
+	t.Helper()
+	r, dir := newReview(t)
+	write(t, dir, "shared.txt", "a\nb\nc\nd\ne\n")
+	write(t, dir, "deep.txt", "one\ntwo\n")
+	do(t, dir, "git", "add", ".")
+	do(t, dir, "git", "commit", "-q", "-m", "bottom\n\nChange-Id: Ideadbeef01\n")
+
+	write(t, dir, "shared.txt", "a\nb\nc\nd\nTOP1\n")
+	do(t, dir, "git", "commit", "-q", "-a", "-m", "top\n\nChange-Id: "+topChangeKey+"\n")
+
+	top, err := r.Change(topChangeKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.EnsureSnapshot(top); err != nil {
+		t.Fatal(err)
+	}
+	topRev := top.Rev
+
+	do(t, dir, "git", "reset", "-q", "--hard", "HEAD~1")
+	write(t, dir, "shared.txt", "a\nB2\nc\nd\ne\n")
+	write(t, dir, "deep.txt", "one\nTWO\n")
+	do(t, dir, "git", "commit", "-q", "-a", "--amend", "--no-edit")
+	do(t, dir, "git", "cherry-pick", topRev)
+	write(t, dir, "shared.txt", "a\nB2\nc\nd\nTOP2\n")
+	do(t, dir, "git", "commit", "-q", "-a", "--amend", "--no-edit")
+
+	if top, err = r.Change(topChangeKey); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := r.Grab(top); err != nil {
+		t.Fatal(err)
+	}
+	return r, dir
+}
+
+// TestRebaseInheritedEdits checks that the edits the upper change inherited
+// from the rebase are told apart from the one it made itself.
+func TestRebaseInheritedEdits(t *testing.T) {
+	r, _ := newStackedReview(t)
+	top, err := r.Change(topChangeKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := r.View(top, "1", "2")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// deep.txt is nowhere in the upper change's own work, so everything
+	// its diff shows was done below it.
+	only, err := r.RebaseOnly(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !only["deep.txt"] {
+		t.Errorf("deep.txt not reported as rebase-only; got %v", only)
+	}
+	if only["shared.txt"] {
+		t.Error("shared.txt reported as rebase-only, but the change edits it")
+	}
+
+	f := v.File("shared.txt")
+	if f == nil {
+		t.Fatalf("shared.txt missing from the diff; files = %+v", v.Files)
+	}
+	old, new, err := r.Contents(v, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := Diff(old, new).Rows
+	r.MarkInherited(v, f, rows)
+	got := rebasedLines(rows)
+	want := []string{"-b", "+B2"}
+	if !slices.Equal(got, want) {
+		t.Errorf("rebased = %q, want %q\n%s", got, want, rowsString(rows))
+	}
+
+	// Against the parent commit the whole diff is the change's own work,
+	// however much of it a rebase carried along.
+	pv, err := r.View(top, "parent", "2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if only, err := r.RebaseOnly(pv); err != nil {
+		t.Fatal(err)
+	} else if len(only) != 0 {
+		t.Errorf("parent view reports rebase-only files %v", only)
+	}
+	pf := pv.File("shared.txt")
+	old, new, err = r.Contents(pv, pf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows = Diff(old, new).Rows
+	r.MarkInherited(pv, pf, rows)
+	if AnyRebased(rows) {
+		t.Errorf("parent view marked rows inherited:\n%s", rowsString(rows))
 	}
 }

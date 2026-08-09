@@ -448,3 +448,75 @@ func TestUnpairedRemovalIsWhollyOld(t *testing.T) {
 		}
 	}
 }
+
+// rebasedLines returns the text of every row marked as inherited.
+func rebasedLines(rows []Row) []string {
+	var out []string
+	for _, r := range rows {
+		if !r.Rebased {
+			continue
+		}
+		if r.L.Num > 0 {
+			out = append(out, "-"+r.L.Text)
+		}
+		if r.R.Num > 0 {
+			out = append(out, "+"+r.R.Text)
+		}
+	}
+	return out
+}
+
+func TestMarkRebased(t *testing.T) {
+	// The parent commits differ in one line; the change's own diff carries
+	// that edit plus one it made itself.
+	oldParent := "a\nb\nc\nd\ne\n"
+	newParent := "a\nB2\nc\nd\ne\n"
+	old := "a\nb\nc\nd\nOWN1\n"
+	new := "a\nB2\nc\nd\nOWN2\n"
+
+	rows := Diff([]byte(old), []byte(new)).Rows
+	MarkRebased(rows, []byte(oldParent), []byte(newParent))
+	got := rebasedLines(rows)
+	want := []string{"-b", "+B2"}
+	if !slices.Equal(got, want) {
+		t.Errorf("rebased = %q, want %q\n%s", got, want, rowsString(rows))
+	}
+	if !AnyRebased(rows) {
+		t.Error("AnyRebased = false")
+	}
+
+	// Unified rows keep the mark, so the flattened view colors them too.
+	if got := rebasedLines(Unified(rows)); !slices.Equal(got, want) {
+		t.Errorf("unified rebased = %q, want %q", got, want)
+	}
+}
+
+func TestMarkRebasedSameParents(t *testing.T) {
+	// Two snapshots on the same parent inherit nothing: every edit in the
+	// diff is the change's own, however much the parent commit contains.
+	rows := Diff([]byte("a\nb\n"), []byte("a\nB2\n")).Rows
+	MarkRebased(rows, []byte("a\nb\n"), []byte("a\nb\n"))
+	if AnyRebased(rows) {
+		t.Errorf("marked rows inherited from an unchanged parent:\n%s", rowsString(rows))
+	}
+}
+
+// TestMarkRebasedCountsEdits checks that an inherited edit accounts for one
+// edit in the change's diff, not for every edit that happens to match it.
+func TestMarkRebasedCountsEdits(t *testing.T) {
+	// The parent gained one "x -> y" edit. The change's diff has two,
+	// because the change made the same edit somewhere else itself.
+	oldParent := "x\n1\n2\n3\n4\n5\n6\n7\n8\nx\n"
+	newParent := "y\n1\n2\n3\n4\n5\n6\n7\n8\nx\n"
+	old := "x\n1\n2\n3\n4\n5\n6\n7\n8\nx\n"
+	new := "y\n1\n2\n3\n4\n5\n6\n7\n8\ny\n"
+
+	rows := Diff([]byte(old), []byte(new)).Rows
+	MarkRebased(rows, []byte(oldParent), []byte(newParent))
+	if got, want := len(rebasedLines(rows)), 2; got != want {
+		t.Errorf("marked %d lines, want %d (one edit, two lines):\n%s", got, want, rowsString(rows))
+	}
+	if !rows[0].Rebased || rows[len(rows)-1].Rebased {
+		t.Errorf("wrong edit marked:\n%s", rowsString(rows))
+	}
+}

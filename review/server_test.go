@@ -1460,3 +1460,57 @@ func TestInlineDiffURL(t *testing.T) {
 		t.Error("no Expand all button on the change page")
 	}
 }
+
+// TestRebasePresentation checks the two things the pages say about edits a
+// change inherited from a rebase: a chip on the files it did not touch at
+// all, and muted colors on the lines it did not write.
+func TestRebasePresentation(t *testing.T) {
+	r, _ := newStackedReview(t)
+	s := newServer(r.DB, r.Root(), r.Pin)
+
+	files := mustGet(t, s, repoURL(t, r, "/c/"+topChangeKey+"?base=1&s=2"))
+	for _, want := range []string{
+		`data-file="deep.txt"`, `data-file="shared.txt"`, `class="chip rebasechip"`,
+	} {
+		if !strings.Contains(files, want) {
+			t.Errorf("file list missing %s:\n%s", want, files)
+		}
+	}
+	// Only deep.txt gets the chip: the change edits shared.txt itself.
+	if n := strings.Count(files, "rebasechip"); n != 1 {
+		t.Errorf("file list has %d rebase chips, want 1", n)
+	}
+	if i, j := strings.Index(files, "rebasechip"), strings.Index(files, `data-file="shared.txt"`); i > j {
+		t.Error("the rebase chip is on shared.txt, which the change edits")
+	}
+
+	diff := mustGet(t, s, repoURL(t, r, "/d/"+topChangeKey+"?base=1&s=2&f=shared.txt"))
+	if !strings.Contains(diff, "Muted lines came along with a rebase") {
+		t.Error("diff does not explain its muted lines")
+	}
+	// One edit is the change's own and one came from below, so each side
+	// carries both a plain highlight and a muted one.
+	var plain, muted []string
+	for _, m := range regexp.MustCompile(`class="code ([^"]+)"`).FindAllStringSubmatch(diff, -1) {
+		if strings.Contains(m[1], "rebased") {
+			muted = append(muted, m[1])
+		} else {
+			plain = append(plain, m[1])
+		}
+	}
+	if len(plain) != 2 || len(muted) != 2 {
+		t.Errorf("highlighted cells: plain %q, muted %q; want two of each", plain, muted)
+	}
+	for _, cells := range [][]string{plain, muted} {
+		if len(cells) == 2 && !(strings.Contains(cells[0], "remove") && strings.Contains(cells[1], "add")) {
+			t.Errorf("cells %q are not a removal and an addition", cells)
+		}
+	}
+
+	// Against the parent commit the whole diff is the change's own work,
+	// so nothing is muted and the note does not appear.
+	whole := mustGet(t, s, repoURL(t, r, "/d/"+topChangeKey+"?base=parent&s=2&f=shared.txt"))
+	if strings.Contains(whole, "rebased") || strings.Contains(whole, "Muted lines") {
+		t.Error("the parent-to-snapshot diff mutes lines")
+	}
+}

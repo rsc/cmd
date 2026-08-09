@@ -338,6 +338,69 @@ func (r *Review) Contents(v *View, f *File) (old, new []byte, err error) {
 	return old, new, nil
 }
 
+// MarkInherited marks the rows of a file's diff whose edits the change did
+// not make: they came along when it was rebased onto a rewritten parent.
+func (r *Review) MarkInherited(v *View, f *File, rows []Row) {
+	if old, new, ok := r.inherited(v, f); ok {
+		MarkRebased(rows, old, new)
+	}
+}
+
+// inherited returns the contents of one file in the parent commits of the
+// view's two sides. Diffing those two shows everything the change's own
+// diff contains but did not put there: edit a commit low in a stack and
+// every commit above it moves onto the new version, so the edit appears in
+// each of their snapshot-to-snapshot diffs too.
+//
+// It reports ok=false when the question does not arise: when the left side
+// is the target's own parent, when both sides sit on the same parent, or
+// for the commit message, which belongs to this change alone.
+func (r *Review) inherited(v *View, f *File) (old, new []byte, ok bool) {
+	if v.Base == nil || v.Target == nil || v.Base.Parent == v.Target.Parent {
+		return nil, nil, false
+	}
+	if f.Path == CommitMsgFile {
+		return nil, nil, false
+	}
+	// A file missing from a parent commit reads as empty, which is what it
+	// means here: an edit that creates a file is an edit like any other.
+	old, _ = r.Repo.Content(v.Base.Parent, f.Old())
+	new, _ = r.Repo.Content(v.Target.Parent, f.Path)
+	return old, new, true
+}
+
+// RebaseOnly reports which of a view's files the change itself does not
+// touch on either side, so that everything their diffs show was done by a
+// commit below this one. Two file listings answer that, where diffing every
+// file to find out would cost four blob reads apiece, and it is worth
+// answering, because those are the files not to open.
+func (r *Review) RebaseOnly(v *View) (map[string]bool, error) {
+	if v.Base == nil || v.Target == nil || v.Base.Parent == v.Target.Parent {
+		return nil, nil
+	}
+	own := map[string]bool{}
+	for _, s := range []*Snapshot{v.Base, v.Target} {
+		files, err := r.Repo.Files(s.Parent, s.Rev)
+		if err != nil {
+			return nil, err
+		}
+		for _, f := range files {
+			own[f.Path] = true
+			if f.OldPath != "" {
+				own[f.OldPath] = true
+			}
+		}
+	}
+	out := map[string]bool{}
+	for _, f := range v.Files {
+		if f.Path == CommitMsgFile || own[f.Path] || (f.OldPath != "" && own[f.OldPath]) {
+			continue
+		}
+		out[f.Path] = true
+	}
+	return out, nil
+}
+
 // PlaceThreads decides where each of a change's comment threads should be
 // drawn in one file of a view. Threads written against the snapshots being
 // displayed appear at their own line; threads from other snapshots are
