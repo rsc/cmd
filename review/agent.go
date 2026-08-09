@@ -76,6 +76,14 @@ The loop:
 
         review reply 12 'Could go two ways here: ... which do you prefer?'
 
+    Ask through the review, not in conversation. A question about a
+    comment belongs in a reply on that thread, where the reviewer reads it
+    beside the code and the comment it is about; asked in conversation it
+    arrives with none of that. So do not stop and put the question to the
+    user: leave the thread unresolved and go on to the next one. Waiting
+    on an answer to one comment is no reason to leave the other twenty
+    untouched, and by the time the answer comes everything else is done.
+
     Omitting the text reads the reply from standard input, which is easier
     for replies of more than a line.
 
@@ -87,9 +95,15 @@ The loop:
     exactly what you changed since they commented. Do not snapshot after
     each individual fix.
 
+ 5. Say what you did, briefly: what you fixed and resolved, and which
+    threads you left open and why. That is a summary of work already
+    finished, not a question waiting on an answer.
+
 Rules:
 
   - Never resolve a thread you did not address.
+  - Never stop the work to ask about a comment. Reply on its thread,
+    leave it unresolved, and carry on with the rest.
   - Never speak for the reviewer. Do not publish their drafts; "review
     publish" is theirs to run.
   - When a comment's line is gone, work out from the text it was written
