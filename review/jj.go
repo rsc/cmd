@@ -17,6 +17,7 @@ import (
 // terminated by \x01, so that descriptions containing newlines survive.
 const jjLogTemplate = `change_id ++ "\0" ++ commit_id ++ "\0" ++ ` +
 	`parents.map(|p| p.commit_id()).join(" ") ++ "\0" ++ ` +
+	`parents.map(|p| p.change_id()).join(" ") ++ "\0" ++ ` +
 	`author.name() ++ " <" ++ author.email() ++ ">" ++ "\0" ++ ` +
 	`author.timestamp().format("%s") ++ "\0" ++ ` +
 	`if(current_working_copy, "1", "0") ++ "\0" ++ ` +
@@ -67,30 +68,35 @@ func (r *jjRepo) Commit(rev string) (*Change, error) {
 }
 
 func parseJJCommit(rec string) (*Change, error) {
-	f := strings.SplitN(rec, "\x00", 7)
-	if len(f) != 7 {
+	f := strings.SplitN(rec, "\x00", 8)
+	if len(f) != 8 {
 		return nil, fmt.Errorf("malformed jj log record %q", rec)
 	}
 	parent := zeroID
 	if p := strings.Fields(f[2]); len(p) > 0 {
 		parent = p[0]
 	}
-	sec, err := strconv.ParseInt(f[4], 10, 64)
-	if err != nil {
-		return nil, fmt.Errorf("malformed jj log date %q", f[4])
+	var parentKey string
+	if p := strings.Fields(f[3]); len(p) > 0 && parent != zeroID {
+		parentKey = p[0]
 	}
-	msg := f[6]
+	sec, err := strconv.ParseInt(f[5], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("malformed jj log date %q", f[5])
+	}
+	msg := f[7]
 	return &Change{
 		// jj change IDs are stable across amends by construction, which
 		// is exactly the identity comments need.
-		Key:     f[0],
-		Rev:     f[1],
-		Parent:  parent,
-		Subject: subject(msg),
-		Message: msg,
-		Author:  f[3],
-		Date:    time.Unix(sec, 0),
-		Current: f[5] == "1",
+		Key:       f[0],
+		Rev:       f[1],
+		Parent:    parent,
+		ParentKey: parentKey,
+		Subject:   subject(msg),
+		Message:   msg,
+		Author:    f[4],
+		Date:      time.Unix(sec, 0),
+		Current:   f[6] == "1",
 	}, nil
 }
 

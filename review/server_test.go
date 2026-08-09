@@ -923,7 +923,11 @@ func TestMigrate(t *testing.T) {
 			}
 
 			// Rewind to the older schema, carrying a reviewed mark across.
-			for _, drop := range []string{"DROP TABLE snapshot_mark", "DROP TABLE repo"} {
+			for _, drop := range []string{
+				"DROP TABLE snapshot_mark",
+				"DROP TABLE repo",
+				"ALTER TABLE snapshot DROP COLUMN parent_key",
+			} {
 				if _, err := d.sql.Exec(drop); err != nil {
 					t.Fatal(err)
 				}

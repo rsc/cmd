@@ -246,6 +246,73 @@ func TestCommitMsgFile(t *testing.T) {
 			t.Errorf("commit message file missing %q:\n%s", want, s)
 		}
 	}
+	// The parent here is an ordinary commit with no Change-Id, so it has
+	// no identity beyond its hash and is named once, not twice.
+	if strings.Contains(s, "Change Parent:") || strings.Contains(s, "Git Parent:") {
+		t.Errorf("commit message file names a parent that has no stable identity:\n%s", s)
+	}
+}
+
+// TestCommitMsgParent checks that a change whose parent carries a Change-Id
+// names it separately from the commit ID. The commit ID moves whenever the
+// commit below is amended; the Change-Id does not, so a diff of the commit
+// message tells a rebase apart from a real change of parent.
+func TestCommitMsgParent(t *testing.T) {
+	dir := newGitRepo(t)
+	write(t, dir, "a.txt", "x\n")
+	do(t, dir, "git", "add", ".")
+	do(t, dir, "git", "commit", "-q", "-m", "bottom\n\nChange-Id: Ibottom\n")
+	write(t, dir, "b.txt", "y\n")
+	do(t, dir, "git", "add", ".")
+	do(t, dir, "git", "commit", "-q", "-m", "top\n\nChange-Id: Itop\n")
+
+	r, _ := OpenRepo(dir)
+	changes, err := r.Changes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	top := changes[0]
+	if top.Key != "Itop" {
+		t.Fatalf("newest change is %+v", top)
+	}
+	if top.ParentKey != "Ibottom" {
+		t.Errorf("ParentKey = %q, want %q", top.ParentKey, "Ibottom")
+	}
+	// Commit resolves the parent the same way Changes does, so that the
+	// commit message of an old snapshot renders identically.
+	again, err := r.Commit(top.Rev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.ParentKey != top.ParentKey {
+		t.Errorf("Commit ParentKey = %q, Changes ParentKey = %q", again.ParentKey, top.ParentKey)
+	}
+
+	data, err := FileContent(r, top.Rev, CommitMsgFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Change Parent: Ibottom\n", "Git Parent:    " + shortRev(top.Parent) + "\n"} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("commit message file missing %q:\n%s", want, data)
+		}
+	}
+
+	// Amending the parent moves the commit ID and leaves the Change-Id
+	// alone, which is the whole point of showing both.
+	do(t, dir, "git", "reset", "-q", "--hard", "HEAD~1")
+	write(t, dir, "a.txt", "x2\n")
+	do(t, dir, "git", "commit", "-q", "-a", "--amend", "--no-edit")
+	do(t, dir, "git", "cherry-pick", top.Rev)
+
+	changes, err = r.Changes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if moved := changes[0]; moved.ParentKey != top.ParentKey || moved.Parent == top.Parent {
+		t.Errorf("after rebase ParentKey = %q (want %q), Parent = %q (want it to have moved from %q)",
+			moved.ParentKey, top.ParentKey, moved.Parent, top.Parent)
+	}
 }
 
 // newJJRepo creates a jj repository, skipping the test if jj is missing.
@@ -392,5 +459,82 @@ func TestJJPin(t *testing.T) {
 	changes, _ := r.Changes()
 	if err := r.Pin(refName(changes[0].Key)+"/1", changes[0].Rev); err != nil {
 		t.Fatalf("Pin: %v", err)
+	}
+}
+
+// TestJJCommitMsgParent checks the jj half of the two-line parent header.
+// In jj the parent's change ID comes straight out of the log template, and
+// it survives the automatic rebase that editing a commit below sets off.
+func TestJJCommitMsgParent(t *testing.T) {
+	dir := newJJRepo(t)
+	write(t, dir, "a.txt", "one\n")
+	do(t, dir, "jj", "describe", "-m", "bottom")
+	do(t, dir, "jj", "new", "-m", "top")
+	write(t, dir, "b.txt", "two\n")
+
+	r, _ := OpenRepo(dir)
+	changes, err := r.Changes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	top := changes[0]
+	if top.Subject != "top" {
+		t.Fatalf("newest change is %+v", top)
+	}
+	if top.ParentKey == "" || top.ParentKey == top.Parent {
+		t.Fatalf("ParentKey = %q, Parent = %q", top.ParentKey, top.Parent)
+	}
+
+	data, err := FileContent(r, top.Rev, CommitMsgFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"JJ Parent:  " + top.ParentKey + "\n", "Git Parent: " + shortRev(top.Parent) + "\n"} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("commit message file missing %q:\n%s", want, data)
+		}
+	}
+
+	// Editing the commit below rewrites it and rebases this one onto the
+	// new version: the git parent moves, the jj parent does not.
+	do(t, dir, "jj", "edit", top.ParentKey)
+	write(t, dir, "a.txt", "one and a half\n")
+	do(t, dir, "jj", "edit", top.Key)
+
+	changes, err = r.Changes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var moved *Change
+	for _, c := range changes {
+		if c.Key == top.Key {
+			moved = c
+		}
+	}
+	if moved == nil {
+		t.Fatalf("change %s is gone", top.Key)
+	}
+	if moved.ParentKey != top.ParentKey {
+		t.Errorf("after rebase ParentKey = %q, want %q", moved.ParentKey, top.ParentKey)
+	}
+	if moved.Parent == top.Parent {
+		t.Errorf("after rebase Parent = %q, unchanged", moved.Parent)
+	}
+}
+
+// TestJJRootParent checks that the virtual root commit, which has a change
+// ID like any other jj commit, is not named as a parent: there is no change
+// there to have moved.
+func TestJJRootParent(t *testing.T) {
+	dir := newJJRepo(t)
+	write(t, dir, "a.txt", "one\n")
+	do(t, dir, "jj", "describe", "-m", "only")
+
+	r, _ := OpenRepo(dir)
+	changes, _ := r.Changes()
+	for _, c := range changes {
+		if c.Parent == zeroID && c.ParentKey != "" {
+			t.Errorf("change %s on the root commit has ParentKey %q", c.Key, c.ParentKey)
+		}
 	}
 }

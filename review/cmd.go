@@ -88,13 +88,12 @@ func currentLines(r *Review, t *Thread, snap *Snapshot) []string {
 		// as it stands, falling back to the one the snapshot recorded if
 		// the change is no longer pending.
 		if snap != nil {
+			kind := r.Repo.Kind()
 			if c, err := r.Change(snap.Key); err == nil {
-				lines, _ := splitLines(commitMsgContent(c))
+				lines, _ := splitLines(commitMsgContent(kind, c))
 				return lines
 			}
-			lines, _ := splitLines(commitMsgContent(&Change{
-				Parent: snap.Parent, Author: snap.Author, Date: snap.Date, Message: snap.Message,
-			}))
+			lines, _ := splitLines(commitMsgContent(kind, snap.Change()))
 			return lines
 		}
 		return nil

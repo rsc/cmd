@@ -125,7 +125,8 @@ func (r *Review) carryReviewed(prev, next *Snapshot, c *Change) error {
 	}
 	// The commit message is not one of the repository's files, so compare
 	// it as it is rendered, which takes in the parent and author too.
-	if !bytes.Equal(commitMsgContent(prev.Change()), commitMsgContent(c)) {
+	kind := r.Repo.Kind()
+	if !bytes.Equal(commitMsgContent(kind, prev.Change()), commitMsgContent(kind, c)) {
 		moved[CommitMsgFile] = true
 	}
 
