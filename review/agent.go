@@ -299,6 +299,51 @@ func cmdSkill(args []string) {
 	fmt.Fprintf(stdout, "Ask an agent to address the review comments and it will find this.\n")
 }
 
+// updateSkills rewrites every already-installed copy of the skill that has
+// fallen behind this binary, and reports the paths it wrote.
+//
+// It never installs one where there is none. Putting instructions in front
+// of an agent is the user's decision, made by running "review skill
+// -install"; keeping them current afterwards is not a decision but
+// bookkeeping, and forgetting it is how an agent ends up reading about
+// flags this binary no longer has.
+//
+// Only the copies under the home directory are considered. A -project
+// install lives in a repository the server may know nothing about, and
+// belongs to that repository's checkout rather than to whoever happens to
+// be serving it.
+func updateSkills() []string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	want := skillText()
+	var wrote []string
+	seen := map[string]bool{}
+	for _, t := range agentTools {
+		if t.Skill == "" {
+			continue
+		}
+		path := filepath.Join(home, t.Skill)
+		if seen[path] {
+			continue
+		}
+		seen[path] = true
+		// A file that is not there is not installed, and one that already
+		// matches needs no write: the common case touches no disk at all.
+		data, err := os.ReadFile(path)
+		if err != nil || string(data) == want {
+			continue
+		}
+		if err := writeSkill(path); err != nil {
+			log.Printf("updating skill at %s: %v", path, err)
+			continue
+		}
+		wrote = append(wrote, path)
+	}
+	return wrote
+}
+
 func writeSkill(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0777); err != nil {
 		return err
