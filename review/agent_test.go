@@ -234,3 +234,55 @@ func TestSkillInstallToDir(t *testing.T) {
 		t.Errorf("did not report where it wrote:\n%s", out.String())
 	}
 }
+
+// TestUpdateSkills checks the rule the server runs on at startup: bring an
+// installed skill up to date, and never install one that is not there.
+func TestUpdateSkills(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// Nothing installed: nothing to update, and nothing created.
+	if wrote := updateSkills(); len(wrote) != 0 {
+		t.Errorf("updateSkills wrote %v into an empty home directory", wrote)
+	}
+	if entries, _ := os.ReadDir(home); len(entries) != 0 {
+		t.Errorf("wrote into an empty home directory: %v", entries)
+	}
+
+	// Install for Claude Code, then age the file as an older binary would
+	// have left it.
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0777); err != nil {
+		t.Fatal(err)
+	}
+	captureOut(t)
+	cmdSkill([]string{"-install"})
+	skill := filepath.Join(home, ".claude", "skills", "review", "SKILL.md")
+
+	// Up to date already: no write, so nothing is reported.
+	if wrote := updateSkills(); len(wrote) != 0 {
+		t.Errorf("updateSkills rewrote an up-to-date skill: %v", wrote)
+	}
+
+	if err := os.WriteFile(skill, []byte("stale instructions\n"), 0666); err != nil {
+		t.Fatal(err)
+	}
+	wrote := updateSkills()
+	if len(wrote) != 1 || wrote[0] != skill {
+		t.Fatalf("updateSkills = %v, want [%s]", wrote, skill)
+	}
+	data, err := os.ReadFile(skill)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != skillText() {
+		t.Error("stale skill was not brought up to date")
+	}
+
+	// The tools that were never installed are still not installed: an
+	// update is not a way to acquire instructions you did not ask for.
+	for _, rel := range []string{".gemini", ".agents"} {
+		if _, err := os.Stat(filepath.Join(home, rel)); !os.IsNotExist(err) {
+			t.Errorf("updateSkills created %s for a tool that is not set up", rel)
+		}
+	}
+}

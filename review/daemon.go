@@ -179,6 +179,13 @@ func cmdServe(args []string) {
 			home = repo.Root()
 		}
 	}
+	// A new binary is usually a new set of instructions, and the server
+	// outlives the shell that installed the old ones, so bring any copy
+	// already installed up to date before serving.
+	for _, path := range updateSkills() {
+		fmt.Fprintf(stderr, "review: updated skill at %s\n", path)
+	}
+
 	// Leaving a state file behind would make the next run think a server
 	// is up when it is not.
 	stop := make(chan os.Signal, 1)

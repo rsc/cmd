@@ -272,6 +272,14 @@ each path once and says which tools it serves. Nothing else is touched:
 review installs skills, and never edits an instructions file that an agent
 would read at the start of every session.
 
+Starting the server rewrites any of those three files that is already
+there and no longer matches the running binary, and says so. Installing
+is a decision, made once; keeping the copy current afterwards is not, and
+forgetting it leaves an agent reading about commands the binary no longer
+has. A file that is not there stays not there, so this never installs
+instructions nobody asked for, and one that already matches is left alone
+rather than rewritten.
+
 The -project flag writes the same things into the repository instead, so
 that they travel with the code, at each tool's own workspace path: Claude
 Code reads .claude/skills, while Antigravity and Codex both read
