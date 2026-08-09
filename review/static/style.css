@@ -15,6 +15,10 @@
 	--light-add-highlight-color: #d8fed8;
 	--dark-remove-highlight-color: #ffcdd2;
 	--light-remove-highlight-color: #ffebee;
+	--dark-rebased-add-highlight-color: #d7d7f9;
+	--light-rebased-add-highlight-color: #eef;
+	--dark-rebased-remove-highlight-color: #f7e8b7;
+	--light-rebased-remove-highlight-color: #fff8dc;
 	--diff-context-control-background-color: #fff7d4;
 	--diff-context-control-border-color: #f6e6a5;
 	--diff-selection-background-color: #c7dbf9;
@@ -161,6 +165,7 @@ button.primary:hover { background: #0d47a1; }
 .chip.working, .chip.current { background: var(--purple-50); color: var(--purple-900); }
 .chip.stalechip { background: var(--orange-50); color: var(--orange-900); }
 .chip.kind { background: var(--gray-200); color: var(--gray-700); }
+.chip.rebasechip { background: var(--light-rebased-remove-highlight-color); color: var(--orange-900); }
 .chip.reviewedchip { background: var(--green-700); color: #fff; font-weight: 500; }
 .chip.lgtmchip { background: var(--blue-700); color: #fff; font-weight: 500; }
 
@@ -362,6 +367,22 @@ td.code.remove .text { background: var(--light-remove-highlight-color); }
 td.code.remove .text .i { background: var(--dark-remove-highlight-color); }
 td.code.remove.total .text,
 td.code.remove.nointra .text { background: var(--dark-remove-highlight-color); }
+
+/* An edit the change inherited from a rebase, which Gerrit calls "due to
+ * rebase": lavender in place of green, tan in place of red. The shapes of
+ * the rules match the ones above; they come after them, and the total and
+ * nointra forms name one more class, so that they win on both counts. */
+td.code.add.rebased .text { background: var(--light-rebased-add-highlight-color); }
+td.code.add.rebased .text .i { background: var(--dark-rebased-add-highlight-color); }
+td.code.add.rebased.total .text,
+td.code.add.rebased.nointra .text { background: var(--dark-rebased-add-highlight-color); }
+
+td.code.remove.rebased .text { background: var(--light-rebased-remove-highlight-color); }
+td.code.remove.rebased .text .i { background: var(--dark-rebased-remove-highlight-color); }
+td.code.remove.rebased.total .text,
+td.code.remove.rebased.nointra .text { background: var(--dark-rebased-remove-highlight-color); }
+
+.rebasenote { color: var(--gray-700); padding: 0 0 8px; }
 
 .text .ws { background: var(--diff-trailing-whitespace-indicator); }
 

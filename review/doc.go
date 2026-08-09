@@ -112,6 +112,28 @@ the whole change, or an earlier snapshot, which is just what has happened
 since you last looked. That second view is the useful one after an agent
 has been at work.
 
+# Rebased Changes
+
+Commits are stacked, so editing one moves every commit above it onto the
+new version. The commits above did not change, but their snapshots did,
+and the edit made below turns up in each of their snapshot-to-snapshot
+diffs. Gerrit calls such a region "due to rebase" and paints it in muted
+colors; review does the same, using Gerrit's palette for that too:
+lavender where a change of its own would be green, tan where it would be
+red. A note above the diff says what the muted colors mean.
+
+An edit is inherited if the same edit appears in the diff of the two
+snapshots' parent commits. Edits are matched by the text they remove and
+add rather than by position, since the change's own edits shift the line
+numbers on one side and not the other. An edit that draws inherited and
+new lines into a single chunk matches nothing and stays unmarked, which
+errs toward showing a line as the change's own work rather than muting
+one that is.
+
+The file list goes further: a file the change does not touch on either
+side is tagged "rebase", because everything its diff shows was done
+below. Those are the files not to open.
+
 # Marking Things Reviewed
 
 Each file in a change and each snapshot of it has a reviewed button, which

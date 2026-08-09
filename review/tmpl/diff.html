@@ -21,6 +21,10 @@
 
   {{template "baseselect" .}}
 
+  {{if .Rebased}}
+  <p class="note rebasenote">Muted lines came along with a rebase: a commit below this one changed them, and this change only moved onto the new version.</p>
+  {{end}}
+
   <nav class="filenav">
     {{if .Prev}}<a id="prevfile" href="{{.Prev.URL}}">← {{.Prev.Name}}</a>{{else}}<span></span>{{end}}
     <a id="filelistlink" href="{{.FilesURL}}">All files</a>
