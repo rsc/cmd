@@ -102,6 +102,15 @@ Other commands that may be useful:
     review comments CHANGE   comments on one change only
     review comments -all     include threads already resolved
     review snapshots         list the snapshots of each change
+
+When you have been asked to review the code rather than to answer comments
+on it, you can start a thread of your own, at the line it is about:
+
+    review add CHANGE file.go:42 'This drops the error from Close.'
+
+Use it only when reviewing is the task. While you are working through
+someone else's comments, reply to them; a new thread there is a remark
+addressed to nobody.
 `
 
 // skillFrontmatter makes the instructions discoverable to Claude Code,

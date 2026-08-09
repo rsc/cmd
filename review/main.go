@@ -16,6 +16,7 @@ import (
 
 var usageMessage = `usage:
 	review [-a addr] [-n]
+	review add [-from name] [-s n] change file[:line] [text]
 	review comments [-json] [-all] [-drafts] [-s n] [-c n] [change]
 	review publish [change]
 	review reply [-from name] [-resolve] thread [text]
@@ -82,6 +83,8 @@ func main() {
 	}
 
 	switch args[0] {
+	case "add":
+		cmdAdd(args[1:])
 	case "comments":
 		cmdComments(args[1:])
 	case "publish":
