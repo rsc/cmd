@@ -291,3 +291,124 @@ func TestCommentsOldestCommitFirst(t *testing.T) {
 		t.Errorf("JSON order = %s then %s, want Ibase then Itop", js[0].Change, js[1].Change)
 	}
 }
+
+func TestParseFileLine(t *testing.T) {
+	tests := []struct {
+		arg  string
+		file string
+		line int
+		bad  bool
+	}{
+		{arg: "a.go:42", file: "a.go", line: 42},
+		{arg: "dir/a.go:1", file: "dir/a.go", line: 1},
+		{arg: "a.go", file: "a.go"},
+		{arg: "/COMMIT_MSG", file: "/COMMIT_MSG"},
+		{arg: "/COMMIT_MSG:3", file: "/COMMIT_MSG", line: 3},
+		// A colon that is not followed by a number is part of the name.
+		{arg: "odd:name.go", file: "odd:name.go"},
+		{arg: "a.go:0", bad: true},
+		{arg: "a.go:-1", bad: true},
+		{arg: "", bad: true},
+	}
+	for _, tt := range tests {
+		file, line, err := parseFileLine(tt.arg)
+		if tt.bad {
+			if err == nil {
+				t.Errorf("parseFileLine(%q) = %q, %d; want an error", tt.arg, file, line)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("parseFileLine(%q): %v", tt.arg, err)
+		} else if file != tt.file || line != tt.line {
+			t.Errorf("parseFileLine(%q) = %q, %d; want %q, %d", tt.arg, file, line, tt.file, tt.line)
+		}
+	}
+}
+
+// TestAdd covers starting a thread from the command line: it lands on the
+// newest snapshot, records the line's text so it can be found again, and
+// comes out of "review comments" like any other thread.
+func TestAdd(t *testing.T) {
+	r, dir := inRepo(t)
+	write(t, dir, "a.go", "package p\n\nfunc F() {\n\tclose()\n}\n")
+	do(t, dir, "git", "add", ".")
+	do(t, dir, "git", "commit", "-q", "-m", "add a.go\n\nChange-Id: Iadd\n")
+	if _, err := r.Repo.Changes(); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureOut(t)
+	cmdAdd(cli("Iadd", "a.go:4", "This drops the error from close."))
+	if !strings.Contains(out.String(), "added thread") {
+		t.Fatalf("add not reported:\n%s", out.String())
+	}
+
+	threads, err := r.DB.Threads(r.Root(), "Iadd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(threads) != 1 {
+		t.Fatalf("got %d threads, want 1", len(threads))
+	}
+	th := threads[0]
+	if th.File != "a.go" || th.Line != 4 || th.Side != "new" {
+		t.Errorf("thread = %+v; want a.go line 4 on the new side", th)
+	}
+	if th.AnchorText != "\tclose()" {
+		t.Errorf("AnchorText = %q, want the text of line 4", th.AnchorText)
+	}
+	if th.Resolved {
+		t.Error("a new thread is already resolved")
+	}
+	if len(th.Comments) != 1 {
+		t.Fatalf("thread has %d comments", len(th.Comments))
+	}
+	// Published at once and marked as not the reviewer's, like a reply.
+	if c := th.Comments[0]; c.Author != "agent" || !c.FromAgent || c.Draft {
+		t.Errorf("comment = %+v; want author agent, from agent, published", c)
+	}
+
+	// It is a real thread: the agent's own reading of the comments finds it.
+	out.Reset()
+	cmdComments(cli())
+	if !strings.Contains(out.String(), "This drops the error from close.") {
+		t.Errorf("added thread missing from comments:\n%s", out.String())
+	}
+}
+
+func TestAddFileLevelAndCommitMsg(t *testing.T) {
+	r, dir := inRepo(t)
+	write(t, dir, "a.go", "package p\n")
+	do(t, dir, "git", "add", ".")
+	do(t, dir, "git", "commit", "-q", "-m", "add a.go\n\nChange-Id: Iwhole\n")
+
+	out := captureOut(t)
+	cmdAdd(cli("-from", "claude", "Iwhole", "a.go", "This file needs a doc comment."))
+	cmdAdd(cli("Iwhole", CommitMsgFile+":1", "Subject should say why."))
+	_ = out
+
+	threads, err := r.DB.Threads(r.Root(), "Iwhole")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(threads) != 2 {
+		t.Fatalf("got %d threads, want 2", len(threads))
+	}
+	byFile := map[string]*Thread{}
+	for _, th := range threads {
+		byFile[th.File] = th
+	}
+	// A file-level comment has no line and no anchor text to lose.
+	whole := byFile["a.go"]
+	if whole == nil || whole.Line != 0 || whole.AnchorText != "" {
+		t.Errorf("file-level thread = %+v", whole)
+	}
+	if whole != nil && whole.Comments[0].Author != "claude" {
+		t.Errorf("-from ignored: %+v", whole.Comments[0])
+	}
+	// The commit message is commentable like any other file.
+	if msg := byFile[CommitMsgFile]; msg == nil || msg.Line != 1 {
+		t.Errorf("commit message thread = %+v", msg)
+	}
+}

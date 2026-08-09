@@ -385,6 +385,110 @@ func cmdReply(args []string) {
 	fmt.Fprintf(stdout, "replied to thread %d\n", id)
 }
 
+// cmdAdd starts a new comment thread, the way clicking a line number in the
+// web interface does. It is the other half of reply: an agent that can only
+// answer comments can report what it was asked about and nothing else.
+func cmdAdd(args []string) {
+	f := newFlags("add", "[-from name] [-s n] change file[:line] [text]")
+	from := f.String("from", "agent", "record the comment as coming from `name`")
+	snap := f.Int("s", 0, "comment on snapshot `n` (default the newest)")
+	f.Parse(args)
+	if f.NArg() < 2 || f.NArg() > 3 {
+		f.Usage()
+	}
+	file, line, err := parseFileLine(f.Arg(1))
+	if err != nil {
+		log.Fatal(err)
+	}
+	body := f.Arg(2)
+	if f.NArg() == 2 {
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			log.Fatal(err)
+		}
+		body = string(data)
+	}
+	if strings.TrimSpace(body) == "" {
+		log.Fatal("empty comment")
+	}
+	if strings.TrimSpace(*from) == "" {
+		log.Fatal("empty -from name")
+	}
+
+	r := open(true)
+	defer r.DB.Close()
+
+	c, err := r.Change(f.Arg(0))
+	if err != nil {
+		log.Fatal(err)
+	}
+	target := ""
+	if *snap > 0 {
+		target = strconv.Itoa(*snap)
+	}
+	// Against the parent commit, so that every file the change touches can
+	// be commented on, not only the ones it has touched since the snapshot
+	// that happens to have been marked reviewed.
+	v, err := r.View(c, "parent", target)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if v.Target == nil {
+		log.Fatal("cannot comment on uncommitted changes: commit them first")
+	}
+	vf := v.File(file)
+	if vf == nil {
+		log.Fatalf("change %s does not touch %s", c.Key, file)
+	}
+
+	// Record the text of the line, so that the comment can be found again
+	// once the change has been amended out from under it.
+	anchor := ""
+	if line > 0 {
+		_, data, err := r.Contents(v, vf)
+		if err != nil {
+			log.Fatal(err)
+		}
+		lines, _ := splitLines(data)
+		if line > len(lines) {
+			log.Fatalf("%s has %d lines in snapshot %d, so there is no line %d", file, len(lines), v.Target.N, line)
+		}
+		anchor = lines[line-1]
+	}
+
+	// Like a reply, this is published at once and marked as not written by
+	// the reviewer: there is no publish step out here, and the web UI draws
+	// the two apart.
+	t, err := r.DB.AddThread(v.Target.ID, file, "new", line, anchor, &Comment{
+		Author: *from, Body: strings.TrimRight(body, "\n"), FromAgent: true, Draft: false,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Fprintf(stdout, "added thread %d on snapshot %d at %s\n", t.ID, v.Target.N, t.Where())
+}
+
+// parseFileLine splits a file:line argument. The line number is optional:
+// without one the comment is about the file as a whole, which is what a
+// comment written at the top of a file in the web interface is.
+func parseFileLine(arg string) (file string, line int, err error) {
+	file = arg
+	if i := strings.LastIndexByte(arg, ':'); i > 0 {
+		// Only a trailing number is a line number. A file whose name really
+		// does contain a colon keeps it.
+		if n, err := strconv.Atoi(arg[i+1:]); err == nil {
+			if n < 1 {
+				return "", 0, fmt.Errorf("invalid line number in %q", arg)
+			}
+			file, line = arg[:i], n
+		}
+	}
+	if file == "" {
+		return "", 0, fmt.Errorf("missing file name in %q", arg)
+	}
+	return file, line, nil
+}
+
 func cmdResolve(args []string, resolved bool) {
 	name := "resolve"
 	if !resolved {
