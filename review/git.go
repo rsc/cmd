@@ -55,7 +55,47 @@ func (r *gitRepo) Changes() ([]*Change, error) {
 	if w != nil {
 		changes = append([]*Change{w}, changes...)
 	}
+	r.setParentKeys(changes)
 	return changes, nil
+}
+
+// setParentKeys fills in each change's ParentKey. Stacked changes name one
+// another, so the parents that have to be fetched are usually only the
+// commit the stack sits on, and one call fetches all of them.
+//
+// A commit with no Change-Id trailer has no identity apart from its hash,
+// which the commit message file already shows on its own line, so those
+// parents are left unnamed rather than named twice.
+func (r *gitRepo) setParentKeys(changes []*Change) {
+	keys := make(map[string]string, len(changes))
+	for _, c := range changes {
+		keys[c.Rev] = c.Key
+	}
+	var missing []string
+	for _, c := range changes {
+		if c.Parent == "" || c.Parent == emptyTree {
+			continue
+		}
+		if _, ok := keys[c.Parent]; !ok {
+			keys[c.Parent] = ""
+			missing = append(missing, c.Parent)
+		}
+	}
+	if len(missing) > 0 {
+		args := append([]string{"git", "log", "--no-walk", gitLogFormat}, missing...)
+		if out, err := run(r.root, args...); err == nil {
+			for _, rec := range records(out, 1) {
+				if p, err := parseGitCommit(rec); err == nil {
+					keys[p.Rev] = p.Key
+				}
+			}
+		}
+	}
+	for _, c := range changes {
+		if k := keys[c.Parent]; k != "" && k != c.Parent {
+			c.ParentKey = k
+		}
+	}
 }
 
 // working returns a synthetic change for the uncommitted working tree,
@@ -103,7 +143,12 @@ func (r *gitRepo) Commit(rev string) (*Change, error) {
 	if len(recs) != 1 {
 		return nil, fmt.Errorf("git log %s: got %d commits", rev, len(recs))
 	}
-	return parseGitCommit(recs[0])
+	c, err := parseGitCommit(recs[0])
+	if err != nil {
+		return nil, err
+	}
+	r.setParentKeys([]*Change{c})
+	return c, nil
 }
 
 func parseGitCommit(rec string) (*Change, error) {

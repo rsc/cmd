@@ -36,10 +36,17 @@ const zeroID = "0000000000000000000000000000000000000000"
 
 // A Change is one commit under review.
 type Change struct {
-	Key     string    // stable identity, surviving amends; see changeKey
-	Rev     string    // commit ID, or WorkingRev
-	Parent  string    // parent commit ID, the default diff base
-	Subject string    // first line of Message
+	Key     string // stable identity, surviving amends; see changeKey
+	Rev     string // commit ID, or WorkingRev
+	Parent  string // parent commit ID, the default diff base
+	Subject string // first line of Message
+
+	// ParentKey is the parent commit's stable identity, when there is one:
+	// its jj change ID, or its Change-Id trailer. Unlike Parent it does not
+	// move when the commit below is amended, so the commit message file can
+	// name the parent in a way that only changes when the parent really does.
+	ParentKey string
+
 	Message string    // full commit message
 	Author  string    // "Name <email>"
 	Date    time.Time // author date
@@ -132,18 +139,47 @@ func FileContent(r Repo, rev, path string) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		return commitMsgContent(c), nil
+		return commitMsgContent(r.Kind(), c), nil
 	}
 	return r.Content(rev, path)
 }
 
 // commitMsgContent renders a change's commit message as a reviewable file,
 // with a header naming the parent, author, and date, as Gerrit does.
-func commitMsgContent(c *Change) []byte {
+//
+// The parent is named twice where it can be: once by its commit ID, which
+// changes whenever the commit below is amended, and once by its stable
+// identity, which does not. Stacked commits are rebased constantly, so the
+// commit ID alone reports a change on the parent line every time anything
+// below moves. The stable line stays put through all of that, and changes
+// only when the change really is sitting on something else — which is
+// worth noticing, and easy to miss in a line that always changes.
+func commitMsgContent(kind string, c *Change) []byte {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Parent:     %s\n", shortRev(c.Parent))
-	fmt.Fprintf(&b, "Author:     %s\n", c.Author)
-	fmt.Fprintf(&b, "Date:       %s\n", c.Date.Format("Mon Jan 2 15:04:05 2006 -0700"))
+	head := [][2]string{}
+	if c.ParentKey != "" {
+		label := "Change Parent:"
+		if kind == "jj" {
+			label = "JJ Parent:"
+		}
+		head = append(head, [2]string{label, c.ParentKey}, [2]string{"Git Parent:", shortRev(c.Parent)})
+	} else {
+		head = append(head, [2]string{"Parent:", shortRev(c.Parent)})
+	}
+	head = append(head,
+		[2]string{"Author:", c.Author},
+		[2]string{"Date:", c.Date.Format("Mon Jan 2 15:04:05 2006 -0700")})
+
+	// Values line up in a column, at least as far out as the header has
+	// always put them, so that adding a second parent line does not shift
+	// every commit message and show up as a diff in every change.
+	col := 12
+	for _, h := range head {
+		col = max(col, len(h[0])+1)
+	}
+	for _, h := range head {
+		fmt.Fprintf(&b, "%-*s%s\n", col, h[0], h[1])
+	}
 	b.WriteString("\n")
 	msg := c.Message
 	if msg == "" {
