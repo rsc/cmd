@@ -19,7 +19,7 @@ import (
 
 // schemaVersion is the current database schema version, recorded in
 // SQLite's user_version so that future changes can be migrated.
-const schemaVersion = 4
+const schemaVersion = 5
 
 // migrations[v] upgrades a database from version v to version v+1.
 // A fresh database is created from schema below and needs none of them.
@@ -45,6 +45,11 @@ var migrations = map[int]string{
 		path TEXT PRIMARY KEY,
 		name TEXT NOT NULL UNIQUE
 	);`,
+	// The commit message file names the parent by its stable identity as
+	// well as its commit ID, so rebuilding an old snapshot's message needs
+	// that identity too. Snapshots taken before this leave it empty and
+	// render the single parent line they always did.
+	4: `ALTER TABLE snapshot ADD COLUMN parent_key TEXT NOT NULL DEFAULT '';`,
 }
 
 // The marks a snapshot can carry. Both are lost when a new snapshot
@@ -63,16 +68,17 @@ CREATE TABLE change (
 	UNIQUE(repo, change_key)
 );
 CREATE TABLE snapshot (
-	id        INTEGER PRIMARY KEY,
-	change_id INTEGER NOT NULL REFERENCES change(id),
-	n         INTEGER NOT NULL,
-	rev       TEXT NOT NULL,
-	parent    TEXT NOT NULL,
-	subject   TEXT NOT NULL,
-	message   TEXT NOT NULL,
-	author    TEXT NOT NULL,
-	date      INTEGER NOT NULL,
-	created   INTEGER NOT NULL,
+	id         INTEGER PRIMARY KEY,
+	change_id  INTEGER NOT NULL REFERENCES change(id),
+	n          INTEGER NOT NULL,
+	rev        TEXT NOT NULL,
+	parent     TEXT NOT NULL,
+	parent_key TEXT NOT NULL DEFAULT '',
+	subject    TEXT NOT NULL,
+	message    TEXT NOT NULL,
+	author     TEXT NOT NULL,
+	date       INTEGER NOT NULL,
+	created    INTEGER NOT NULL,
 	UNIQUE(change_id, n)
 );
 CREATE TABLE thread (
@@ -120,17 +126,18 @@ CREATE INDEX thread_loc ON thread(snapshot_id, file);
 // pointed at when the snapshot was grabbed. It is Gerrit's patch set,
 // kept locally.
 type Snapshot struct {
-	ID       int64
-	ChangeID int64
-	Key      string // the change key this belongs to
-	N        int    // 1..N within the change
-	Rev      string
-	Parent   string
-	Subject  string
-	Message  string
-	Author   string
-	Date     time.Time
-	Created  time.Time
+	ID        int64
+	ChangeID  int64
+	Key       string // the change key this belongs to
+	N         int    // 1..N within the change
+	Rev       string
+	Parent    string
+	ParentKey string // the parent's stable identity, empty if it has none
+	Subject   string
+	Message   string
+	Author    string
+	Date      time.Time
+	Created   time.Time
 }
 
 // ShortRev returns an abbreviated commit ID for display.
@@ -140,7 +147,7 @@ func (s *Snapshot) ShortRev() string { return shortRev(s.Rev) }
 // as it stood when the snapshot was taken.
 func (s *Snapshot) Change() *Change {
 	return &Change{
-		Key: s.Key, Rev: s.Rev, Parent: s.Parent,
+		Key: s.Key, Rev: s.Rev, Parent: s.Parent, ParentKey: s.ParentKey,
 		Subject: s.Subject, Message: s.Message,
 		Author: s.Author, Date: s.Date,
 	}
@@ -307,12 +314,12 @@ func (d *DB) changeID(repo, key string) (int64, error) {
 	return res.LastInsertId()
 }
 
-const snapshotCols = `s.id, s.change_id, c.change_key, s.n, s.rev, s.parent, s.subject, s.message, s.author, s.date, s.created`
+const snapshotCols = `s.id, s.change_id, c.change_key, s.n, s.rev, s.parent, s.parent_key, s.subject, s.message, s.author, s.date, s.created`
 
 func scanSnapshot(rows interface{ Scan(...any) error }) (*Snapshot, error) {
 	var s Snapshot
 	var date, created int64
-	err := rows.Scan(&s.ID, &s.ChangeID, &s.Key, &s.N, &s.Rev, &s.Parent, &s.Subject, &s.Message, &s.Author, &date, &created)
+	err := rows.Scan(&s.ID, &s.ChangeID, &s.Key, &s.N, &s.Rev, &s.Parent, &s.ParentKey, &s.Subject, &s.Message, &s.Author, &date, &created)
 	if err != nil {
 		return nil, err
 	}
@@ -378,9 +385,9 @@ func (d *DB) AddSnapshot(repo string, c *Change) (s *Snapshot, created bool, err
 	n := len(existing) + 1
 	now := time.Now()
 	res, err := d.sql.Exec(`INSERT INTO snapshot
-		(change_id, n, rev, parent, subject, message, author, date, created)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, n, c.Rev, c.Parent, c.Subject, c.Message, c.Author, c.Date.Unix(), now.Unix())
+		(change_id, n, rev, parent, parent_key, subject, message, author, date, created)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, n, c.Rev, c.Parent, c.ParentKey, c.Subject, c.Message, c.Author, c.Date.Unix(), now.Unix())
 	if err != nil {
 		return nil, false, err
 	}
@@ -390,7 +397,8 @@ func (d *DB) AddSnapshot(repo string, c *Change) (s *Snapshot, created bool, err
 	}
 	return &Snapshot{
 		ID: rowID, ChangeID: id, Key: c.Key, N: n,
-		Rev: c.Rev, Parent: c.Parent, Subject: c.Subject, Message: c.Message,
+		Rev: c.Rev, Parent: c.Parent, ParentKey: c.ParentKey,
+		Subject: c.Subject, Message: c.Message,
 		Author: c.Author, Date: c.Date, Created: now,
 	}, true, nil
 }

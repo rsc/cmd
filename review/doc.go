@@ -134,6 +134,21 @@ The file list goes further: a file the change does not touch on either
 side is tagged "rebase", because everything its diff shows was done
 below. Those are the files not to open.
 
+The commit message file has the same problem in miniature: its header
+names the parent commit, and a rebase changes that line every time,
+whatever it was that moved. So the header names the parent twice where it
+can, by its commit ID and by its stable identity — the parent's jj change
+ID, or its Change-Id trailer:
+
+	JJ Parent:  zpzyxumyszvpxqkutowoqlywtyztvkqn
+	Git Parent: 33e19a79562e
+
+The git line changes on every rebase and says nothing. The line above it
+does not, so when it does change, the change really has moved to a
+different parent, which is worth knowing and easy to miss in a line that
+always changes. A parent with no identity beyond its hash, as in a git
+repository not using Change-Id trailers, is named once as before.
+
 # Marking Things Reviewed
 
 Each file in a change and each snapshot of it has a reviewed button, which
