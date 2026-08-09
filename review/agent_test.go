@@ -40,9 +40,14 @@ func TestSkillPrint(t *testing.T) {
 		"review comments",
 		"review reply -resolve 12",
 		"review reply -from claude",
+		"review add CHANGE file.go:42",
 		"review snapshot",
 		"do not pass -drafts",
 		"Never resolve a thread you did not address.",
+		// And that a question about a comment is a reply on its thread,
+		// not a halt to ask the user, which strands the other threads.
+		"Ask through the review, not in conversation.",
+		"Never stop the work to ask about a comment.",
 		// The instructions must warn that a comment's line moves, and
 		// that the context is the older text, which are the two things
 		// an agent gets wrong if it is not told.
