@@ -147,13 +147,18 @@ func gomoteOutput(c *exec.Cmd) ([]byte, error) {
 }
 
 // builderOSArch extracts the GOOS and GOARCH from a builder name
-// like gotip-linux-amd64 or gotip-linux-amd64-longtest.
+// like gotip-linux-amd64, gotip-linux-amd64-longtest, or
+// gotip-linux-amd64_c4dh96-perf_vs_release.
 func builderOSArch(builder string) (goos, goarch string, err error) {
 	f := strings.Split(builder, "-")
 	if len(f) < 3 {
 		return "", "", fmt.Errorf("cannot parse GOOS-GOARCH from builder name %s", builder)
 	}
-	return f[1], f[2], nil
+	goos, goarch = f[1], f[2]
+	if prefix, _, hasRunMod := strings.Cut(goarch, "_"); hasRunMod {
+		goarch = prefix
+	}
+	return goos, goarch, nil
 }
 
 // gomoteBuilder returns the builder type to use for the given GOOS and
