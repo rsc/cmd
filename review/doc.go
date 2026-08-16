@@ -84,6 +84,12 @@ Comments start as drafts, visible only in the web interface, until
 published. This is Gerrit's model: it lets a review be composed as a whole
 rather than dribbled out a remark at a time.
 
+A change publishes its own drafts from the button on its page. The
+repository's page has one that publishes every draft in the repository,
+across all of its changes, for a review written a commit at a time up a
+stack; it says how many it will publish and is not there when there are
+none. Both are the a key, as in Gerrit.
+
 The diff colors are Gerrit's, taken from its source rather than
 approximated, because they are chosen to stay legible for color-blind
 readers. A changed line gets a pale background, and the part of the line
