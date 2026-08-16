@@ -81,15 +81,33 @@ func threadArg(t *Thread, repo, user string) *threadFrag {
 
 // reviewedInfo drives the "mark reviewed" button. Building the URL in Go
 // keeps file names containing & or ? from breaking the markup.
+//
+// A file is in one of three states, not two. Reviewed and unreviewed are
+// verdicts, recorded when the button is pressed. Rebase-only is not a
+// verdict but a fact about the diff: the change does not touch the file,
+// so there is nothing in it to have an opinion about. It is worked out
+// afresh for whatever two snapshots are being compared rather than stored,
+// because it is true of a comparison and not of a file.
 type reviewedInfo struct {
-	URL      string
-	Reviewed bool
+	URL        string
+	Reviewed   bool
+	RebaseOnly bool
 }
 
-func reviewedArg(repo string, snapshotID int64, file string, on bool) *reviewedInfo {
+func reviewedArg(repo string, snapshotID int64, file string, on, rebaseOnly bool) *reviewedInfo {
 	q := url.Values{"snapshot": {strconv.FormatInt(snapshotID, 10)}, "f": {file}}
 	q.Set("on", boolParam(!on))
-	return &reviewedInfo{URL: "/" + url.PathEscape(repo) + "/f/reviewed?" + q.Encode(), Reviewed: on}
+	// The button carries the state of the page it was drawn on, so that
+	// pressing it twice gets back to what was there rather than to a state
+	// re-derived from a base the request no longer names.
+	if rebaseOnly {
+		q.Set("rebase", "1")
+	}
+	return &reviewedInfo{
+		URL:        "/" + url.PathEscape(repo) + "/f/reviewed?" + q.Encode(),
+		Reviewed:   on,
+		RebaseOnly: rebaseOnly,
+	}
 }
 
 // snapshotReviewedArg drives the reviewed button on a whole snapshot.
@@ -686,6 +704,15 @@ type renderRow struct {
 	ExpandURL    string
 }
 
+// RowClass is what the row's <tr> carries: its kind, plus a mark on a row
+// a rebase brought along, so that the keyboard can step over it.
+func (r *renderRow) RowClass() string {
+	if r.Rebased {
+		return r.Class() + " rebased"
+	}
+	return r.Class()
+}
+
 // Class returns the CSS class for the row's kind.
 func (r *renderRow) Class() string {
 	switch r.Kind {
@@ -857,10 +884,11 @@ func (s *server) diff(w http.ResponseWriter, req *http.Request, r *Review) error
 
 	// Neighbouring files, for the ] and [ shortcuts and the J/K jumps.
 	type fileEntry struct {
-		Path     string `json:"path"`
-		URL      string `json:"url"`
-		Comments int    `json:"comments"`
-		Reviewed bool   `json:"reviewed"`
+		Path       string `json:"path"`
+		URL        string `json:"url"`
+		Comments   int    `json:"comments"`
+		Reviewed   bool   `json:"reviewed"`
+		RebaseOnly bool   `json:"rebase"`
 	}
 	reviewed := map[string]bool{}
 	if v.Target != nil {
@@ -876,7 +904,13 @@ func (s *server) diff(w http.ResponseWriter, req *http.Request, r *Review) error
 				n += len(t.Comments)
 			}
 		}
-		entries = append(entries, fileEntry{ff.Path, s.diffURL(r, c.Key, ff.Path, base, target), n, reviewed[ff.Path]})
+		entries = append(entries, fileEntry{
+			Path:       ff.Path,
+			URL:        s.diffURL(r, c.Key, ff.Path, base, target),
+			Comments:   n,
+			Reviewed:   reviewed[ff.Path],
+			RebaseOnly: rebaseOnly[ff.Path],
+		})
 		if ff.Path != name {
 			continue
 		}
@@ -1422,7 +1456,8 @@ func (s *server) reviewed(w http.ResponseWriter, req *http.Request, r *Review) e
 	if err := r.DB.SetReviewed(id, file, on); err != nil {
 		return err
 	}
-	return tmpl.ExecuteTemplate(w, "reviewedbutton", reviewedArg(r.Name, id, file, on))
+	return tmpl.ExecuteTemplate(w, "reviewedbutton",
+		reviewedArg(r.Name, id, file, on, req.FormValue("rebase") == "1"))
 }
 
 func (s *server) snapshotReviewed(w http.ResponseWriter, req *http.Request, r *Review) error {

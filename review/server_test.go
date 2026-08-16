@@ -7,6 +7,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -1474,18 +1475,19 @@ func TestRebasePresentation(t *testing.T) {
 
 	files := mustGet(t, s, repoURL(t, r, "/c/"+topChangeKey+"?base=1&s=2"))
 	for _, want := range []string{
-		`data-file="deep.txt"`, `data-file="shared.txt"`, `class="chip rebasechip"`,
+		`data-file="deep.txt"`, `data-file="shared.txt"`, "rebase only",
 	} {
 		if !strings.Contains(files, want) {
 			t.Errorf("file list missing %s:\n%s", want, files)
 		}
 	}
-	// Only deep.txt gets the chip: the change edits shared.txt itself.
-	if n := strings.Count(files, "rebasechip"); n != 1 {
-		t.Errorf("file list has %d rebase chips, want 1", n)
+	// Only deep.txt is in that state: the change edits shared.txt itself,
+	// so that one is merely unreviewed.
+	if n := strings.Count(files, "rebase only"); n != 1 {
+		t.Errorf("file list marks %d files rebase-only, want 1", n)
 	}
-	if i, j := strings.Index(files, "rebasechip"), strings.Index(files, `data-file="shared.txt"`); i > j {
-		t.Error("the rebase chip is on shared.txt, which the change edits")
+	if i, j := strings.Index(files, "rebase only"), strings.Index(files, `data-file="shared.txt"`); i > j {
+		t.Error("shared.txt is marked rebase-only, but the change edits it")
 	}
 
 	diff := mustGet(t, s, repoURL(t, r, "/d/"+topChangeKey+"?base=1&s=2&f=shared.txt"))
@@ -1583,5 +1585,88 @@ func TestRebaseOnlyBanner(t *testing.T) {
 	got = mustGet(t, s, repoURL(t, r, "/c/"+topChangeKey))
 	if !strings.Contains(got, chose) || strings.Contains(got, theirs) {
 		t.Errorf("change page banner is wrong:\n%s", got)
+	}
+}
+
+// TestReviewedThreeStates covers the file's three states and the two things
+// the keyboard needs to step over what is not this change's work: the
+// rebase flag on each file, and the mark on each inherited diff row.
+func TestReviewedThreeStates(t *testing.T) {
+	r, _ := newStackedReview(t)
+	s := newServer(r.DB, r.Root(), r.Pin)
+	url := repoURL(t, r, "/c/"+topChangeKey+"?base=1&s=2")
+
+	// deep.txt is rebase-only; shared.txt is unreviewed.
+	files := mustGet(t, s, url)
+	if !strings.Contains(files, "rebase only") || !strings.Contains(files, "mark reviewed") {
+		t.Errorf("file list is missing a state:\n%s", files)
+	}
+
+	// Marking the rebase-only file reviewed still works, and the verdict
+	// wins over the fact: a file someone has read is reviewed.
+	snaps, err := r.DB.Snapshots(r.Root(), topChangeKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := snaps[len(snaps)-1]
+	if err := r.DB.SetReviewed(target.ID, "deep.txt", true); err != nil {
+		t.Fatal(err)
+	}
+	files = mustGet(t, s, url)
+	if strings.Contains(files, "rebase only") {
+		t.Error("a file marked reviewed still shows as rebase-only")
+	}
+	if n := strings.Count(files, "✓ reviewed"); n != 1 {
+		t.Errorf("%d files marked reviewed, want 1", n)
+	}
+	if err := r.DB.SetReviewed(target.ID, "deep.txt", false); err != nil {
+		t.Fatal(err)
+	}
+
+	// The file list the keyboard walks says which files to skip, so that M
+	// passes over a file with nothing in it to review.
+	diff := mustGet(t, s, repoURL(t, r, "/d/"+topChangeKey+"?base=1&s=2&f=shared.txt"))
+	var entries []struct {
+		Path       string `json:"path"`
+		RebaseOnly bool   `json:"rebase"`
+	}
+	data := diff[strings.Index(diff, `id="filedata"`):]
+	data = data[strings.Index(data, ">")+1 : strings.Index(data, "</script>")]
+	if err := json.Unmarshal([]byte(html.UnescapeString(data)), &entries); err != nil {
+		t.Fatalf("parsing file data: %v\n%s", err, data)
+	}
+	got := map[string]bool{}
+	for _, e := range entries {
+		got[e.Path] = e.RebaseOnly
+	}
+	if !got["deep.txt"] || got["shared.txt"] || got[CommitMsgFile] {
+		t.Errorf("rebase flags = %v; want only deep.txt", got)
+	}
+
+	// And every row of an inherited chunk is marked, so that n and p can
+	// step over the chunk the same way they step over unchanged text.
+	for _, tt := range []struct {
+		file  string
+		want  int
+		other int
+	}{
+		// Each edit replaces one line, so it is one side-by-side row.
+		{file: "deep.txt", want: 1, other: 0},
+		{file: "shared.txt", want: 1, other: 1},
+	} {
+		body := mustGet(t, s, repoURL(t, r, "/d/"+topChangeKey+"?base=1&s=2&f="+tt.file))
+		rebased, plain := 0, 0
+		for _, m := range regexp.MustCompile(`<tr class="diffrow ([^"]+)"`).FindAllStringSubmatch(body, -1) {
+			switch {
+			case strings.Contains(m[1], "rebased"):
+				rebased++
+			case !strings.Contains(m[1], "equal"):
+				plain++
+			}
+		}
+		if rebased != tt.want || plain != tt.other {
+			t.Errorf("%s: %d rebased rows and %d of the change's own; want %d and %d",
+				tt.file, rebased, plain, tt.want, tt.other)
+		}
 	}
 }

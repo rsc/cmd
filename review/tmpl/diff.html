@@ -14,7 +14,7 @@
         <button type="submit" class="primary">Publish {{.Drafts}} draft{{if ne .Drafts 1}}s{{end}}</button>
       </form>
       {{end}}
-      {{if .CanComment}}{{template "reviewedbutton" reviewedArg .Repo .Target.ID .FileParam .File.Reviewed}}{{end}}
+      {{if .CanComment}}{{template "reviewedbutton" reviewedArg .Repo .Target.ID .FileParam .File.Reviewed .FileRebaseOnly}}{{end}}
       <button id="prefsbutton" title="Diff preferences (,)">⚙</button>
     </div>
   </div>

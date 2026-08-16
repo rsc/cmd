@@ -131,9 +131,14 @@ new lines into a single chunk matches nothing and stays unmarked, which
 errs toward showing a line as the change's own work rather than muting
 one that is.
 
-The file list goes further: a file the change does not touch on either
-side is tagged "rebase", because everything its diff shows was done
-below. Those are the files not to open.
+Gerrit stops there: its file list has no idea which files are which, so
+the only way to learn that a file is nothing but rebase is to open it and
+find every line muted. Review carries the distinction up to the file list
+and into the keyboard, where it saves the trip. A file the change does not
+touch on either side reads "rebase only" instead of "mark reviewed", M
+passes over it on its way to the next unreviewed file, and n and p step
+over inherited chunks inside a file the same way they step over unchanged
+text. What is left under the cursor is the change's own work.
 
 The commit message file has the same problem in miniature: its header
 names the parent commit, and a rebase changes that line every time,
@@ -155,6 +160,16 @@ repository not using Change-Id trailers, is named once as before.
 Each file in a change and each snapshot of it has a reviewed button, which
 lights up solid green once pressed and stays lit. The button is the
 indicator: there is nothing else to read.
+
+A file is in one of three states, not two. Unreviewed and reviewed are
+verdicts, recorded when the button is pressed. The third, "rebase only",
+is not a verdict but a fact about the diff: the change does not touch the
+file, so there is nothing in it to have an opinion about. It is worked out
+afresh for whatever two snapshots are being compared rather than stored,
+because it is true of a comparison and not of a file, and a verdict beats
+it — a file someone has read reads as reviewed whatever put the changes
+there. Pressing the button still marks such a file reviewed, for anyone
+who wants the whole list green.
 
 Marking a snapshot reviewed also decides what later diffs are shown
 against. Opening a file with no base chosen explicitly compares it against
@@ -304,7 +319,9 @@ top of the window, so that what follows it is on screen: a chunk read with
 its consequences off the bottom edge is half a chunk. Near the end of a
 file they stop once the bottom of it is in view, since there is nothing
 past that to scroll to, and a chunk already near the top is left where it
-is rather than nudged.
+is rather than nudged. Neither stops on a chunk a rebase brought along;
+those are stepped over like unchanged text, so that a file whose changes
+are all inherited has nowhere for the cursor to stop.
 
 Pressing n on the last chunk of a file parks the cursor on its last line
 and shows a bar saying that pressing n again moves to the next file that
@@ -316,9 +333,11 @@ that marks the current file reviewed and moves on.
 
 Moving to the next unreviewed file wraps around the file list, because
 what is left unreviewed is often behind you: the commit message comes
-first and is easy to leave for last. Only when nothing is left unreviewed
-does the second press go up to the change, which makes reaching the change
-page mean the work is done.
+first and is easy to leave for last. Files in the rebase-only state are
+passed over along with the reviewed ones, so the wrap ends at something
+worth reading. Only when nothing is left unreviewed does the second press
+go up to the change, which makes reaching the change page mean the work
+is done.
 
 Gerrit's patch-set combo drives snapshots: v followed by s diffs against
 the base, v w against the latest snapshot, and v b the base against the
