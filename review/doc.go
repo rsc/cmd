@@ -269,6 +269,11 @@ may be left off to comment on the file as a whole, and the file may be
 earlier one, and like a reply it is published at once and attributed to
 "agent" unless -from says otherwise.
 
+Any file in the snapshot can be named, not only the ones the change
+touches. A file it does not touch still turns up when one snapshot is
+compared against another, carried in by a rebase, and asking why it moved
+is a fair question to ask.
+
 The intended loop is that the agent reads the comments, fixes what it can,
 replies and resolves the trivial ones, and leaves the rest; then the human
 runs "review snapshot" and compares the new snapshot against the old one
