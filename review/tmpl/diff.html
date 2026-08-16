@@ -21,7 +21,7 @@
 
   {{template "baseselect" .}}
 
-  {{if .Rebased}}
+  {{if .ShowRebaseNote}}
   <p class="note rebasenote">Muted lines came along with a rebase: a commit below this one changed them, and this change only moved onto the new version.</p>
   {{end}}
 

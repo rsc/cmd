@@ -1518,3 +1518,70 @@ func TestRebasePresentation(t *testing.T) {
 		t.Error("the parent-to-snapshot diff mutes lines")
 	}
 }
+
+// TestRebaseOnlyBanner covers what the base selector says when it has
+// chosen the base itself. Normally it explains the choice; when the file
+// on screen is one the change never touched, the more useful thing to say
+// is that none of what follows is the change's own work.
+func TestRebaseOnlyBanner(t *testing.T) {
+	r, _ := newStackedReview(t)
+	s := newServer(r.DB, r.Root(), r.Pin)
+
+	// Mark snapshot 1 reviewed, which is what makes the base automatic.
+	snaps, err := r.DB.Snapshots(r.Root(), topChangeKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snaps) != 2 {
+		t.Fatalf("got %d snapshots, want 2", len(snaps))
+	}
+	if err := r.DB.SetSnapshotReviewed(snaps[0].ID, true); err != nil {
+		t.Fatal(err)
+	}
+
+	const (
+		chose  = "showing changes since you last reviewed"
+		theirs = "changes in file are entirely due to earlier commits"
+		note   = "Muted lines came along with a rebase"
+	)
+
+	// deep.txt is wholly inherited: say so, and do not follow it with the
+	// note saying the same thing about the colors.
+	got := mustGet(t, s, repoURL(t, r, "/d/"+topChangeKey+"?f=deep.txt"))
+	if !strings.Contains(got, theirs) {
+		t.Errorf("diff of an untouched file does not say so:\n%s", got)
+	}
+	for _, unwanted := range []string{chose, note} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("diff of an untouched file also says %q", unwanted)
+		}
+	}
+
+	// shared.txt is partly the change's own work, so the base selector
+	// explains its choice as before and the note explains the colors.
+	got = mustGet(t, s, repoURL(t, r, "/d/"+topChangeKey+"?f=shared.txt"))
+	if !strings.Contains(got, chose) || !strings.Contains(got, note) {
+		t.Errorf("diff of an edited file lost its explanations:\n%s", got)
+	}
+	if strings.Contains(got, theirs) {
+		t.Errorf("diff of an edited file claims the change did not touch it")
+	}
+
+	// With a base asked for in the URL there is no choice to explain, so
+	// the note is the only thing that says why the lines are muted.
+	got = mustGet(t, s, repoURL(t, r, "/d/"+topChangeKey+"?base=1&s=2&f=deep.txt"))
+	if !strings.Contains(got, note) {
+		t.Errorf("muted lines went unexplained:\n%s", got)
+	}
+	for _, unwanted := range []string{chose, theirs} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("an explicit base produced %q", unwanted)
+		}
+	}
+
+	// The change page has no one file to say it about.
+	got = mustGet(t, s, repoURL(t, r, "/c/"+topChangeKey))
+	if !strings.Contains(got, chose) || strings.Contains(got, theirs) {
+		t.Errorf("change page banner is wrong:\n%s", got)
+	}
+}
