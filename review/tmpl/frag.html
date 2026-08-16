@@ -19,9 +19,15 @@
   </label>
   {{if .FileParam}}<input type="hidden" name="f" value="{{.FileParam}}">{{end}}
   {{if .AutoBase}}
+  {{if .FileRebaseOnly}}
+  <span class="autobase" title="this change does not touch this file: everything here was done by a commit below it">
+    changes in file are entirely due to earlier commits
+  </span>
+  {{else}}
   <span class="autobase" title="Snapshot {{.BaseN}} is the most recent one you marked reviewed">
     showing changes since you last reviewed
   </span>
+  {{end}}
   {{end}}
 </form>
 {{end}}
