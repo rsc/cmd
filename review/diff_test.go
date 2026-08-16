@@ -333,7 +333,7 @@ func TestCollapse(t *testing.T) {
 		fmt.Fprintf(&new, "tail %d\n", i)
 	}
 
-	rows := Collapse(Diff([]byte(old.String()), []byte(new.String())).Rows, 3)
+	rows := Collapse(Diff([]byte(old.String()), []byte(new.String())).Rows, 3, nil)
 
 	// Expect: skip, 3 context, change, 3 context, skip.
 	var kinds []RowKind
@@ -359,7 +359,7 @@ func TestCollapse(t *testing.T) {
 func TestCollapseKeepsShortRuns(t *testing.T) {
 	old := "a\nx\nb\nc\nd\ny\ne\n"
 	new := "a\nX\nb\nc\nd\nY\ne\n"
-	rows := Collapse(Diff([]byte(old), []byte(new)).Rows, 3)
+	rows := Collapse(Diff([]byte(old), []byte(new)).Rows, 3, nil)
 	for _, r := range rows {
 		if r.Kind == RowSkip {
 			t.Fatalf("unexpected skip in short run:\n%s", rowsString(rows))
@@ -369,14 +369,14 @@ func TestCollapseKeepsShortRuns(t *testing.T) {
 
 func TestCollapseNoContext(t *testing.T) {
 	rows := Diff([]byte("a\nb\n"), []byte("a\nB\n")).Rows
-	if got := rowsString(Collapse(rows, 0)); got != rowsString(rows) {
+	if got := rowsString(Collapse(rows, 0, nil)); got != rowsString(rows) {
 		t.Errorf("Collapse with ctx 0 changed the rows:\n%s", got)
 	}
 }
 
 func TestUnified(t *testing.T) {
 	d := Diff([]byte("a\nb\nc\n"), []byte("a\nB\nC\nD\n"))
-	got := rowsString(Unified(Collapse(d.Rows, 0)))
+	got := rowsString(Unified(Collapse(d.Rows, 0, nil)))
 	want := "  1 1 \"a\"\n- 2 \"b\"\n- 3 \"c\"\n+ 2 \"B\"\n+ 3 \"C\"\n+ 4 \"D\"\n"
 	if got != want {
 		t.Errorf("Unified:\n%s\nwant:\n%s", got, want)
@@ -518,5 +518,46 @@ func TestMarkRebasedCountsEdits(t *testing.T) {
 	}
 	if !rows[0].Rebased || rows[len(rows)-1].Rebased {
 		t.Errorf("wrong edit marked:\n%s", rowsString(rows))
+	}
+}
+
+// TestCollapseKeepsWantedRows checks that a row the caller asks to keep
+// survives collapsing with context around it. Comments ride on this: one
+// written far from any change would otherwise be folded away unread.
+func TestCollapseKeepsWantedRows(t *testing.T) {
+	var b strings.Builder
+	for i := 1; i <= 60; i++ {
+		fmt.Fprintf(&b, "line %d\n", i)
+	}
+	old := b.String()
+	new := strings.Replace(old, "line 1\n", "LINE 1\n", 1)
+
+	rows := Diff([]byte(old), []byte(new)).Rows
+	keep := func(r Row) bool { return r.R.Num == 40 }
+	got := Collapse(rows, 3, keep)
+
+	// Line 40 and three lines either side of it are shown, and the run is
+	// broken into two skips rather than one.
+	shown := map[int]bool{}
+	skips := 0
+	for _, r := range got {
+		if r.Kind == RowSkip {
+			skips++
+			continue
+		}
+		shown[r.R.Num] = true
+	}
+	for n := 37; n <= 43; n++ {
+		if !shown[n] {
+			t.Errorf("line %d was collapsed away:\n%s", n, rowsString(got))
+			break
+		}
+	}
+	if skips != 2 {
+		t.Errorf("got %d skip rows, want 2 (one either side of the kept line)", skips)
+	}
+	// Without the request it is a single run, as before.
+	if plain := Collapse(rows, 3, nil); len(plain) >= len(got) {
+		t.Errorf("keeping a row did not show more: %d rows with, %d without", len(got), len(plain))
 	}
 }

@@ -146,6 +146,20 @@ having written something about a file is a better reason to look at it
 than the diff being inherited is a reason not to, and a comment nobody
 can find is worse than a file nobody needed to open.
 
+The same goes for a file with no diff at all. Comparing against the
+snapshot last marked reviewed narrows the list to what has moved since,
+which is the point of doing it, but a comment written on anything else
+would then have nowhere to be listed. Such a file is added to the end of
+the list with no status letter, since the change did nothing to it, and
+opening it shows the file and the comment on it. A comment on a file that
+is no longer there at all keeps its place in the change's comment history
+instead, there being no row left to click.
+
+Collapsing the unchanged parts of a diff leaves the commented lines
+showing, wherever they fall. A comment can sit a long way from anything
+the change did, and a comment folded away behind an expander is one
+nobody will answer.
+
 The hidden rows are rendered all the same, so showing them is instant and
 needs no round trip, and asking for one of them by name — coming back up
 from it with u — shows them without being asked. Shown, they read "rebase
