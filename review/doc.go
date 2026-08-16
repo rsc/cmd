@@ -204,6 +204,12 @@ it — a file someone has read reads as reviewed whatever put the changes
 there. Pressing the button still marks such a file reviewed, for anyone
 who wants the whole list green.
 
+Marking a snapshot reviewed marks every file it changes, and unmarking it
+takes them back. Saying a snapshot has been read is saying its files have,
+and a snapshot lit up over a list of unlit files would be a contradiction
+on one screen. A mark that could be set as a group but only taken back one
+file at a time would be a trap, so the pair of them go together.
+
 Marking a snapshot reviewed also decides what later diffs are shown
 against. Opening a file with no base chosen explicitly compares it against
 the newest snapshot that has been marked reviewed, so you see only what has
@@ -218,6 +224,18 @@ thing to know: there is nothing there to review.
 File marks are per snapshot: marking a file reviewed in snapshot 2 says
 nothing about snapshot 3, which is the point, since the file may have
 changed. File marks do not affect the base; only snapshot marks do.
+
+A snapshot holding nothing but a rebase inherits the mark from the one
+before it. Editing a commit low in a stack rewrites every commit above it,
+and would otherwise un-review the lot, not one of which changed anything:
+you would be asked to read a diff whose every line was somebody else's
+work. So when everything separating two snapshots is a file the change
+does not touch, and the commit message differs only in the line naming the
+parent commit — the line a rebase always moves — the mark carries. The
+same test the file list uses to call a file rebase-only decides it, so
+what the reader is told and what this concludes cannot drift apart.
+Anything the change did itself stops the carry, and so does anything the
+repository will not answer for.
 
 The LGTM button on a change records that its snapshot looks good. Like the
 reviewed marks it belongs to the snapshot it was put on, so a new snapshot

@@ -503,3 +503,164 @@ func TestRebaseInheritedEdits(t *testing.T) {
 		t.Errorf("parent view marked rows inherited:\n%s", rowsString(rows))
 	}
 }
+
+// TestMarkSnapshotFilesMarksFiles checks that marking a snapshot reviewed
+// is a statement about its files too, and that unmarking takes it back.
+func TestMarkSnapshotFilesMarksFiles(t *testing.T) {
+	r, dir := newReview(t)
+	write(t, dir, "a.go", "package p\n")
+	write(t, dir, "b.go", "package q\n")
+	do(t, dir, "git", "add", ".")
+	do(t, dir, "git", "commit", "-q", "-m", "two files\n\nChange-Id: Imark\n")
+
+	c, err := r.Change("Imark")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snaps, err := r.EnsureSnapshot(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap := snaps[0]
+
+	if err := r.MarkSnapshotFiles(snap, true); err != nil {
+		t.Fatal(err)
+	}
+	marks, err := r.DB.Reviewed(snap.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{CommitMsgFile, "a.go", "b.go"} {
+		if !marks[want] {
+			t.Errorf("%s not marked reviewed; marks = %v", want, marks)
+		}
+	}
+	// base.txt is in the repository but not in this change.
+	if marks["base.txt"] {
+		t.Error("marked a file the change does not touch")
+	}
+
+	if err := r.MarkSnapshotFiles(snap, false); err != nil {
+		t.Fatal(err)
+	}
+	if marks, err = r.DB.Reviewed(snap.ID); err != nil {
+		t.Fatal(err)
+	} else if len(marks) != 0 {
+		t.Errorf("unmarking left %v behind", marks)
+	}
+}
+
+// TestSpreadReviewedAcrossRebase is the case this exists for: a commit low
+// in a stack is edited, everything above it is rebased, and the commits
+// above have nothing new in them to read. Their reviewed marks should
+// survive the move.
+func TestSpreadReviewedAcrossRebase(t *testing.T) {
+	r, _ := newStackedReview(t)
+	top, err := r.Change(topChangeKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snaps, err := r.DB.Snapshots(r.Root(), topChangeKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snaps) != 2 {
+		t.Fatalf("got %d snapshots, want 2", len(snaps))
+	}
+
+	// The stacked fixture amends the top change itself, so snapshot 2 has
+	// work of its own and the mark must not carry.
+	if err := r.DB.SetSnapshotReviewed(snaps[0].ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.SpreadReviewed(topChangeKey); err != nil {
+		t.Fatal(err)
+	}
+	if on, err := r.DB.SnapshotReviewed(snaps[1].ID); err != nil {
+		t.Fatal(err)
+	} else if on {
+		t.Fatal("carried the mark over a snapshot with work of its own")
+	}
+
+	// Now review snapshot 2 and rebase the change without touching it: the
+	// commit below it moves, and nothing here changes but the parent.
+	if err := r.DB.SetSnapshotReviewed(snaps[1].ID, true); err != nil {
+		t.Fatal(err)
+	}
+	dir := r.Root()
+	topRev := top.Rev
+	do(t, dir, "git", "reset", "-q", "--hard", "HEAD~1")
+	write(t, dir, "deep.txt", "one\nTHREE\n")
+	do(t, dir, "git", "commit", "-q", "-a", "--amend", "--no-edit")
+	do(t, dir, "git", "cherry-pick", topRev)
+
+	if top, err = r.Change(topChangeKey); err != nil {
+		t.Fatal(err)
+	}
+	if _, created, err := r.Grab(top); err != nil {
+		t.Fatal(err)
+	} else if !created {
+		t.Fatal("the rebase did not produce a new snapshot")
+	}
+
+	snaps, err = r.DB.Snapshots(r.Root(), topChangeKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snaps) != 3 {
+		t.Fatalf("got %d snapshots, want 3", len(snaps))
+	}
+	if on, err := r.DB.SnapshotReviewed(snaps[2].ID); err != nil {
+		t.Fatal(err)
+	} else if !on {
+		t.Error("a snapshot holding nothing but a rebase was left unreviewed")
+	}
+	// And its files came with it, since marking a snapshot marks them.
+	marks, err := r.DB.Reviewed(snaps[2].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !marks["shared.txt"] || !marks[CommitMsgFile] {
+		t.Errorf("files not marked with the snapshot: %v", marks)
+	}
+}
+
+// TestSpreadReviewedStopsAtRealWork checks the other half: a snapshot that
+// changes something of the change's own is not carried over.
+func TestSpreadReviewedStopsAtRealWork(t *testing.T) {
+	r, dir := newReview(t)
+	write(t, dir, "a.go", "package p\n")
+	do(t, dir, "git", "add", ".")
+	do(t, dir, "git", "commit", "-q", "-m", "one\n\nChange-Id: Iwork\n")
+
+	c, err := r.Change("Iwork")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snaps, err := r.EnsureSnapshot(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.DB.SetSnapshotReviewed(snaps[0].ID, true); err != nil {
+		t.Fatal(err)
+	}
+
+	write(t, dir, "a.go", "package p\n\nvar X int\n")
+	do(t, dir, "git", "commit", "-q", "-a", "--amend", "--no-edit")
+	if c, err = r.Change("Iwork"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := r.Grab(c); err != nil {
+		t.Fatal(err)
+	}
+
+	snaps, err = r.DB.Snapshots(r.Root(), "Iwork")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if on, err := r.DB.SnapshotReviewed(snaps[1].ID); err != nil {
+		t.Fatal(err)
+	} else if on {
+		t.Error("an amended change was marked reviewed without being read")
+	}
+}
