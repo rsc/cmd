@@ -5,7 +5,6 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"slices"
 	"strconv"
@@ -74,24 +73,16 @@ func (r *Review) EnsureSnapshot(c *Change) ([]*Snapshot, error) {
 // has not moved since the last snapshot, it reports created=false and
 // returns that snapshot unchanged, so that grabbing twice is harmless.
 func (r *Review) Grab(c *Change) (s *Snapshot, created bool, err error) {
-	before, err := r.DB.Snapshots(r.Root(), c.Key)
-	if err != nil {
-		return nil, false, err
-	}
 	s, created, err = r.DB.AddSnapshot(r.Root(), c)
 	if err != nil {
 		return s, created, err
 	}
-	if n := len(before); created && n > 0 {
-		if err := r.carryReviewed(before[n-1], s, c); err != nil {
-			return s, created, err
-		}
-	}
-	// A rebase that brought nothing of this change's own along leaves it as
-	// reviewed as it was. This runs whether or not a snapshot was recorded:
-	// a snapshot marked reviewed after the rebase that produced the one
-	// above it settles that one too, and grabbing is what a reviewer reaches
-	// for when the marks look out of date.
+	// Carry the marks along the whole chain: file by file for the files
+	// that did not move, and snapshot by snapshot where a rebase brought
+	// nothing of this change's own along. This runs whether or not a
+	// snapshot was recorded, so that a mark put on after the fact settles
+	// too, and grabbing is what a reviewer reaches for when the marks look
+	// out of date.
 	if err := r.SpreadMarks(c.Key); err != nil {
 		return s, created, err
 	}
@@ -114,10 +105,27 @@ func (r *Review) Grab(c *Change) (s *Snapshot, created bool, err error) {
 // Only files whose contents are identical carry over: a file that moved
 // is a file to look at again, and the marks on the snapshot itself never
 // carry, since they are a verdict on a state that no longer exists.
-func (r *Review) carryReviewed(prev, next *Snapshot, c *Change) error {
+func (r *Review) carryReviewed(prev, next *Snapshot) error {
 	marks, err := r.DB.Reviewed(prev.ID)
 	if err != nil || len(marks) == 0 {
 		return err
+	}
+	// Nothing to do if they are all carried already, which is the usual
+	// answer once a chain has settled and is worth an early return: the
+	// listing below costs a subprocess.
+	have, err := r.DB.Reviewed(next.ID)
+	if err != nil {
+		return err
+	}
+	todo := false
+	for file := range marks {
+		if !have[file] {
+			todo = true
+			break
+		}
+	}
+	if !todo {
+		return nil
 	}
 
 	changed, err := r.Repo.Files(prev.Rev, next.Rev)
@@ -134,9 +142,9 @@ func (r *Review) carryReviewed(prev, next *Snapshot, c *Change) error {
 		}
 	}
 	// The commit message is not one of the repository's files, so compare
-	// it as it is rendered, which takes in the parent and author too.
-	kind := r.Repo.Kind()
-	if !bytes.Equal(commitMsgContent(kind, prev.Change()), commitMsgContent(kind, c)) {
+	// it as it is rendered — all but the lines naming the parent, which a
+	// rebase moves without a word of the message changing.
+	if !sameMessage(r.Repo.Kind(), prev.Change(), next.Change()) {
 		moved[CommitMsgFile] = true
 	}
 
@@ -149,6 +157,25 @@ func (r *Review) carryReviewed(prev, next *Snapshot, c *Change) error {
 		}
 	}
 	return nil
+}
+
+// sameMessage reports whether two commit messages differ only in the lines
+// naming the parent commit. Those move with every rebase, whatever it was
+// that moved, so they are no reason to read a message again; the stable
+// name of the parent is compared on its own, since moving onto a different
+// parent change is a real move.
+//
+// A snapshot recorded before parent identities were stored has none, and
+// an unknown parent is not a different one: refusing there would leave
+// every such snapshot asking for its message to be read again forever.
+func sameMessage(kind string, prev, next *Change) bool {
+	if msgWithoutParents(kind, prev) != msgWithoutParents(kind, next) {
+		return false
+	}
+	if prev.ParentKey != "" && next.ParentKey != "" {
+		return prev.ParentKey == next.ParentKey
+	}
+	return true
 }
 
 // A View is a diff of one change between two revisions: a target snapshot
@@ -439,6 +466,11 @@ func (r *Review) SpreadMarks(key string) error {
 	}
 	for i := 1; i < len(snaps); i++ {
 		prev, next := snaps[i-1], snaps[i]
+		// Files first: a file that did not move keeps its mark whether or
+		// not anything else in the snapshot did.
+		if err := r.carryReviewed(prev, next); err != nil {
+			return err
+		}
 		var carry []string
 		for _, kind := range []string{markReviewed, markLGTM} {
 			was, err := r.DB.SnapshotMark(prev.ID, kind)
@@ -514,23 +546,9 @@ func (r *Review) onlyInherited(prev, next *Snapshot) (bool, error) {
 			return false, nil
 		}
 	}
-	// The commit message is not one of the repository's files. Both of the
-	// lines naming the parent are left out of the comparison and the parent
-	// is compared on its own below, so that a message reworded during the
-	// rebase is still caught.
-	kind := r.Repo.Kind()
-	if msgWithoutParents(kind, prev.Change()) != msgWithoutParents(kind, next.Change()) {
-		return false, nil
-	}
-	// Moving onto a different parent change is a real move, not a rebase
-	// underneath. But a snapshot recorded before parent keys were stored
-	// has none, and an unknown parent is not a different one: refusing
-	// there would leave every such snapshot blocking the carry for good,
-	// with the files already saying the change's own work is untouched.
-	if prev.ParentKey != "" && next.ParentKey != "" {
-		return prev.ParentKey == next.ParentKey, nil
-	}
-	return true, nil
+	// The commit message is not one of the repository's files, and a rebase
+	// moves the line naming the parent without a word of it changing.
+	return sameMessage(r.Repo.Kind(), prev.Change(), next.Change()), nil
 }
 
 // msgWithoutParents renders a commit message file without either of the
