@@ -735,3 +735,38 @@ func TestGrabSpreadsWithNothingToGrab(t *testing.T) {
 		t.Errorf("files not marked with the snapshot: %v", marks)
 	}
 }
+
+// TestOnlyInheritedUnknownParentKey covers a snapshot recorded before
+// parent keys were stored. It has none, which is not a different parent
+// but an unknown one, and must not block the carry for good.
+func TestOnlyInheritedUnknownParentKey(t *testing.T) {
+	r, _ := newStackedReview(t)
+	snaps, err := r.DB.Snapshots(r.Root(), topChangeKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev, next := snaps[0], snaps[1]
+
+	// Both keys known and equal: the message compares equal.
+	prev.ParentKey, next.ParentKey = "kkk", "kkk"
+	if msgWithoutParents("jj", prev.Change()) == msgWithoutParents("jj", next.Change()) {
+		// The fixture amends the message's parent only, so this holds.
+	} else {
+		t.Fatal("fixture messages differ for reasons other than the parent")
+	}
+
+	// One side unrecorded: the rendered messages must still compare equal,
+	// which is what the empty column used to break.
+	prev.ParentKey, next.ParentKey = "", "kkk"
+	if got, want := msgWithoutParents("jj", prev.Change()), msgWithoutParents("jj", next.Change()); got != want {
+		t.Errorf("an unrecorded parent key changes the message:\n%q\nvs\n%q", got, want)
+	}
+
+	// Both known and different is a real move, and is caught.
+	prev.ParentKey, next.ParentKey = "aaa", "bbb"
+	if ok, err := r.onlyInherited(prev, next); err != nil {
+		t.Fatal(err)
+	} else if ok {
+		t.Error("a move onto a different parent change was taken for a rebase")
+	}
+}
