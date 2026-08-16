@@ -237,22 +237,31 @@ File marks are per snapshot: marking a file reviewed in snapshot 2 says
 nothing about snapshot 3, which is the point, since the file may have
 changed. File marks do not affect the base; only snapshot marks do.
 
-A snapshot holding nothing but a rebase inherits the mark from the one
+A snapshot holding nothing but a rebase inherits both marks from the one
 before it. Editing a commit low in a stack rewrites every commit above it,
-and would otherwise un-review the lot, not one of which changed anything:
+and would otherwise strip the lot, not one of which changed anything:
 you would be asked to read a diff whose every line was somebody else's
 work. So when everything separating two snapshots is a file the change
 does not touch, and the commit message differs only in the line naming the
-parent commit — the line a rebase always moves — the mark carries. The
-same test the file list uses to call a file rebase-only decides it, so
-what the reader is told and what this concludes cannot drift apart.
+parent commit — the line a rebase always moves — the marks carry. What
+looked good is still there, so the sign-off travels with the reviewed
+mark. The same test the file list uses to call a file rebase-only decides
+it, so what the reader is told and what this concludes cannot drift apart.
 Anything the change did itself stops the carry, and so does anything the
 repository will not answer for.
 
 The LGTM button on a change records that its snapshot looks good. Like the
 reviewed marks it belongs to the snapshot it was put on, so a new snapshot
 arrives without it, and the change list shows the mark only when it is on
-the newest snapshot. Both marks appear in the change list as chips.
+the newest snapshot.
+
+Pressing it marks the snapshot and its files reviewed as well: saying a
+snapshot looks good says it has been read. Taking the LGTM back does not
+take that back — the reading still happened, and the reviewed marks are a
+record of what has been looked at rather than of what was thought of it.
+Because one implies the other, the change list shows the LGTM chip in
+place of the reviewed chip rather than beside it, which would say the same
+thing twice on every row.
 
 Which snapshot carries it is shown in the change's own snapshot list, as a
 chip on that snapshot's line. The mark belongs to a snapshot rather than to
