@@ -112,8 +112,10 @@ against.
 records a snapshot of every change; naming changes records only those. A
 change is snapshotted automatically the first time it is viewed, so there
 is always something for comments to attach to. Grabbing a snapshot when
-the change has not moved is a reported no-op, so repeating the command is
-harmless. Snapshots are numbered from 1 within each change.
+the change has not moved records nothing and says so, so repeating the
+command is harmless. It is not quite a no-op: it still settles the
+reviewed marks, which is what to reach for when they look out of date.
+Snapshots are numbered from 1 within each change.
 
 Any two snapshots can be compared. The base selector at the top of a
 change chooses what the diff is against: the commit's parent, which is

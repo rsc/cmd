@@ -664,3 +664,74 @@ func TestSpreadReviewedStopsAtRealWork(t *testing.T) {
 		t.Error("an amended change was marked reviewed without being read")
 	}
 }
+
+// TestGrabSpreadsWithNothingToGrab checks that grabbing settles the
+// reviewed marks even when the change has not moved. The marks can fall
+// behind whenever a snapshot is marked reviewed after a later one already
+// exists, and grabbing is what a reviewer reaches for then.
+func TestGrabSpreadsWithNothingToGrab(t *testing.T) {
+	r, _ := newStackedReview(t)
+	top, err := r.Change(topChangeKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Rebase the top change without touching it, so snapshot 3 holds
+	// nothing of its own, and record it before anything is reviewed.
+	dir := r.Root()
+	topRev := top.Rev
+	do(t, dir, "git", "reset", "-q", "--hard", "HEAD~1")
+	write(t, dir, "deep.txt", "one\nTHREE\n")
+	do(t, dir, "git", "commit", "-q", "-a", "--amend", "--no-edit")
+	do(t, dir, "git", "cherry-pick", topRev)
+	if top, err = r.Change(topChangeKey); err != nil {
+		t.Fatal(err)
+	}
+	if _, created, err := r.Grab(top); err != nil || !created {
+		t.Fatalf("grab = %v, %v; want a new snapshot", created, err)
+	}
+
+	snaps, err := r.DB.Snapshots(r.Root(), topChangeKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snaps) != 3 {
+		t.Fatalf("got %d snapshots, want 3", len(snaps))
+	}
+
+	// Now mark snapshot 2 reviewed directly, the way the CLI or an older
+	// database would leave it, without going through the web handler that
+	// spreads on its own.
+	if err := r.DB.SetSnapshotReviewed(snaps[1].ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if on, err := r.DB.SnapshotReviewed(snaps[2].ID); err != nil {
+		t.Fatal(err)
+	} else if on {
+		t.Fatal("snapshot 3 was already marked before the grab")
+	}
+
+	// Grabbing again records nothing, and settles the marks anyway.
+	s, created, err := r.Grab(top)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created {
+		t.Fatal("grab recorded a snapshot for a change that had not moved")
+	}
+	if s.N != 3 {
+		t.Errorf("grab returned snapshot %d, want the newest", s.N)
+	}
+	if on, err := r.DB.SnapshotReviewed(snaps[2].ID); err != nil {
+		t.Fatal(err)
+	} else if !on {
+		t.Error("grabbing did not carry the mark to the snapshot above")
+	}
+	marks, err := r.DB.Reviewed(snaps[2].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !marks["shared.txt"] {
+		t.Errorf("files not marked with the snapshot: %v", marks)
+	}
+}
