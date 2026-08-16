@@ -436,19 +436,28 @@ func cmdAdd(args []string) {
 	if v.Target == nil {
 		log.Fatal("cannot comment on uncommitted changes: commit them first")
 	}
-	vf := v.File(file)
-	if vf == nil {
-		log.Fatalf("change %s does not touch %s", c.Key, file)
+	// The comment is anchored in the snapshot it is written against, so the
+	// file is looked up there rather than in the change's own diff. A file
+	// the change does not touch is fair game: it still shows up when one
+	// snapshot is compared against another, carried in by a rebase, and
+	// asking why it moved is a fair question to ask.
+	data, cerr := FileContent(r.Repo, v.TargetRev, file)
+	if cerr != nil {
+		// Not in the snapshot at all. A file the change deletes is still
+		// worth a word, but only about the file as a whole: it has no text
+		// on this side for a line to point at.
+		if v.File(file) == nil {
+			log.Fatalf("no file %s in change %s", file, c.Key)
+		}
+		if line > 0 {
+			log.Fatalf("%s is not in snapshot %d; leave the line off to comment on the file itself", file, v.Target.N)
+		}
 	}
 
 	// Record the text of the line, so that the comment can be found again
 	// once the change has been amended out from under it.
 	anchor := ""
 	if line > 0 {
-		_, data, err := r.Contents(v, vf)
-		if err != nil {
-			log.Fatal(err)
-		}
 		lines, _ := splitLines(data)
 		if line > len(lines) {
 			log.Fatalf("%s has %d lines in snapshot %d, so there is no line %d", file, len(lines), v.Target.N, line)

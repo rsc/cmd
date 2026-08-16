@@ -412,3 +412,32 @@ func TestAddFileLevelAndCommitMsg(t *testing.T) {
 		t.Errorf("commit message thread = %+v", msg)
 	}
 }
+
+// TestAddFileOutsideTheChange checks that a comment can be written on a
+// file the change does not touch. Such a file still turns up in the diff
+// of one snapshot against another, carried in by a rebase, and asking why
+// it moved is a fair question to ask.
+func TestAddFileOutsideTheChange(t *testing.T) {
+	r, dir := inRepo(t)
+	write(t, dir, "a.go", "package p\n")
+	do(t, dir, "git", "add", ".")
+	do(t, dir, "git", "commit", "-q", "-m", "add a.go\n\nChange-Id: Ioutside\n")
+
+	// base.txt belongs to the base commit; this change never touches it.
+	out := captureOut(t)
+	cmdAdd(cli("Ioutside", "base.txt:1", "Why did this move?"))
+	if !strings.Contains(out.String(), "added thread") {
+		t.Fatalf("add refused a file outside the change:\n%s", out.String())
+	}
+	threads, err := r.DB.Threads(r.Root(), "Ioutside")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(threads) != 1 || threads[0].File != "base.txt" || threads[0].AnchorText != "base" {
+		t.Fatalf("thread = %+v", threads[0])
+	}
+
+	// The guards that remain — an unknown file, a line past the end of one
+	// that exists — end the process, so they are exercised by hand rather
+	// than here.
+}
