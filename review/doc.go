@@ -141,6 +141,11 @@ file on its way to the next unreviewed one, and n and p step over
 inherited chunks inside a file the same way they step over unchanged
 text. What is left in front of you is the change's own work.
 
+A comment keeps a file in the list whatever put the lines there. Somebody
+having written something about a file is a better reason to look at it
+than the diff being inherited is a reason not to, and a comment nobody
+can find is worse than a file nobody needed to open.
+
 The hidden rows are rendered all the same, so showing them is instant and
 needs no round trip, and asking for one of them by name — coming back up
 from it with u — shows them without being asked. Shown, they read "rebase

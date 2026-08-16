@@ -210,7 +210,9 @@ tr.item:hover > td { background: var(--gray-50); }
 .repolist .path { color: var(--gray-500); font-family: var(--mono); font-size: 11px; }
 /* Files the change does not touch are left out of the list until asked
  * for. The class sits on the table rather than the rows so that it stays
- * clear of the filter box, which hides rows with the hidden attribute. */
+ * clear of the filter box, which hides rows with the hidden attribute.
+ * Only rows the server marked are held back: one carrying a comment keeps
+ * its place in the list however its lines got there. */
 table.filelist.hiderebase tr.rebaseonly { display: none; }
 .rebasefoot { padding: 8px 2px; }
 #showrebase {
