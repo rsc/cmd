@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 )
 
 // A Review pairs a repository with the database holding its comments.
@@ -83,6 +84,11 @@ func (r *Review) Grab(c *Change) (s *Snapshot, created bool, err error) {
 	}
 	if n := len(before); n > 0 {
 		if err := r.carryReviewed(before[n-1], s, c); err != nil {
+			return s, created, err
+		}
+		// A rebase that brought nothing of this change's own along leaves
+		// it as reviewed as it was.
+		if err := r.SpreadReviewed(c.Key); err != nil {
 			return s, created, err
 		}
 	}
@@ -376,6 +382,136 @@ func (r *Review) Contents(v *View, f *File) (old, new []byte, err error) {
 		}
 	}
 	return old, new, nil
+}
+
+// MarkSnapshotFiles marks, or unmarks, every file a snapshot changes,
+// which is what marking the snapshot itself reviewed is a statement
+// about. Leaving the files unmarked would make the snapshot's own mark
+// disagree with every line beneath it.
+//
+// The files are those the snapshot changes against its parent commit,
+// which is the whole of the change as it stood — not what has happened
+// since some earlier snapshot, since it is the whole that was read. The
+// commit message is one of them, as it is everywhere else.
+//
+// Unmarking clears them again. A mark that could be set as a group but
+// only taken back one file at a time would be a trap, and the button is
+// the indicator: it has to be able to tell the truth in both positions.
+func (r *Review) MarkSnapshotFiles(snap *Snapshot, on bool) error {
+	files, err := r.Repo.Files(snap.Parent, snap.Rev)
+	if err != nil {
+		// The commit may be gone if snapshots were never pinned. The
+		// snapshot's own mark still stands; only the files are missed.
+		return nil
+	}
+	if err := r.DB.SetReviewed(snap.ID, CommitMsgFile, on); err != nil {
+		return err
+	}
+	for _, f := range files {
+		if err := r.DB.SetReviewed(snap.ID, f.Path, on); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// SpreadReviewed carries the reviewed mark forward from a snapshot to the
+// ones after it that hold nothing of the change's own work: a rebase moved
+// the change, and there is nothing new to read. Editing a commit low in a
+// stack would otherwise un-review every commit above it, not one of which
+// changed anything.
+//
+// It walks the whole chain, so marking an old snapshot reviewed reaches
+// the newest one through however many rebases lie between, and running it
+// twice changes nothing.
+func (r *Review) SpreadReviewed(key string) error {
+	snaps, err := r.DB.Snapshots(r.Root(), key)
+	if err != nil {
+		return err
+	}
+	for i := 1; i < len(snaps); i++ {
+		prev, next := snaps[i-1], snaps[i]
+		was, err := r.DB.SnapshotReviewed(prev.ID)
+		if err != nil {
+			return err
+		}
+		done, err := r.DB.SnapshotReviewed(next.ID)
+		if err != nil {
+			return err
+		}
+		if !was || done {
+			continue
+		}
+		ok, err := r.onlyInherited(prev, next)
+		if err != nil || !ok {
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		if err := r.DB.SetSnapshotReviewed(next.ID, true); err != nil {
+			return err
+		}
+		if err := r.MarkSnapshotFiles(next, true); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// onlyInherited reports whether everything that differs between two
+// snapshots was done by some other commit. A file counts as the change's
+// own if the change touches it in either snapshot, which is the same test
+// the file list uses to call a file rebase-only, so what the reader is
+// told and what this concludes cannot drift apart.
+//
+// Not being able to tell is not the same as yes: whenever the repository
+// will not answer, the answer here is no, which asks for another look
+// rather than skipping one.
+func (r *Review) onlyInherited(prev, next *Snapshot) (bool, error) {
+	changed, err := r.Repo.Files(prev.Rev, next.Rev)
+	if err != nil {
+		return false, nil
+	}
+	own := map[string]bool{}
+	for _, s := range []*Snapshot{prev, next} {
+		files, err := r.Repo.Files(s.Parent, s.Rev)
+		if err != nil {
+			return false, nil
+		}
+		for _, f := range files {
+			own[f.Path] = true
+			if f.OldPath != "" {
+				own[f.OldPath] = true
+			}
+		}
+	}
+	for _, f := range changed {
+		if own[f.Path] || (f.OldPath != "" && own[f.OldPath]) {
+			return false, nil
+		}
+	}
+	// The commit message is not one of the repository's files. Its parent
+	// line moves with every rebase, whatever moved, so that line is not a
+	// change to read; anything else in the message is.
+	kind := r.Repo.Kind()
+	return msgWithoutParent(kind, prev.Change()) == msgWithoutParent(kind, next.Change()), nil
+}
+
+// msgWithoutParent renders a commit message file without the line naming
+// the parent commit. That is the line a rebase always moves, which is why
+// the header names the parent twice: the other name stays put unless the
+// change really has moved onto something else, and it is left in here.
+func msgWithoutParent(kind string, c *Change) string {
+	lines := strings.Split(string(commitMsgContent(kind, c)), "\n")
+	out := lines[:0]
+	for _, l := range lines {
+		if strings.HasPrefix(l, "Git Parent:") || strings.HasPrefix(l, "Parent:") {
+			continue
+		}
+		out = append(out, l)
+	}
+	return strings.Join(out, "\n")
 }
 
 // MarkInherited marks the rows of a file's diff whose edits the change did
