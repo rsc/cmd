@@ -532,6 +532,12 @@ type filesPage struct {
 	Comments    int
 	Unresolved  int
 	Drafts      int
+
+	// RebaseOnlyCount is how many of Files the change does not touch. They
+	// are rendered but hidden, and this drives the link that brings them
+	// back; on a change rebased over a busy commit they can outnumber the
+	// files there is anything to look at.
+	RebaseOnlyCount int
 }
 
 func (s *server) view(req *http.Request, r *Review) (*Change, *View, error) {
@@ -593,6 +599,9 @@ func (s *server) files(w http.ResponseWriter, req *http.Request, r *Review) erro
 			if !t.Resolved {
 				info.Unresolved++
 			}
+		}
+		if info.RebaseOnly {
+			p.RebaseOnlyCount++
 		}
 		p.Files = append(p.Files, info)
 	}

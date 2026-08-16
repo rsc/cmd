@@ -1670,3 +1670,38 @@ func TestReviewedThreeStates(t *testing.T) {
 		}
 	}
 }
+
+// TestRebaseOnlyFilesHidden checks that the file list leaves out the files
+// the change does not touch, and offers them at the foot of the list.
+func TestRebaseOnlyFilesHidden(t *testing.T) {
+	r, _ := newStackedReview(t)
+	s := newServer(r.DB, r.Root(), r.Pin)
+
+	files := mustGet(t, s, repoURL(t, r, "/c/"+topChangeKey+"?base=1&s=2"))
+	// The rows are still rendered, so that showing them costs no round
+	// trip; the table says they start out hidden.
+	if !strings.Contains(files, `class="filelist hiderebase"`) {
+		t.Errorf("file list does not hide anything:\n%s", files)
+	}
+	if !strings.Contains(files, `class="item filerow rebaseonly"`) {
+		t.Error("no row is marked rebase-only")
+	}
+	if n := strings.Count(files, "rebaseonly"); n != 1 {
+		t.Errorf("%d rows marked rebase-only, want 1", n)
+	}
+	if !strings.Contains(files, "show 1 rebase-only file\n") {
+		t.Errorf("no link to show the hidden file:\n%s", files)
+	}
+	if !strings.Contains(files, `data-count="1"`) {
+		t.Error("the link does not carry the count the label is rebuilt from")
+	}
+
+	// Against the parent commit the change is all its own work, so there
+	// is nothing to hide and no link to offer.
+	whole := mustGet(t, s, repoURL(t, r, "/c/"+topChangeKey+"?base=parent&s=2"))
+	for _, unwanted := range []string{"hiderebase", "rebaseonly", "rebase-only file"} {
+		if strings.Contains(whole, unwanted) {
+			t.Errorf("the whole-change file list mentions %q", unwanted)
+		}
+	}
+}

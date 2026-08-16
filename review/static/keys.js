@@ -640,6 +640,8 @@
 		if (p) { e.preventDefault(); actions.diffPrefs(); return; }
 		const x = e.target.closest("#expandall");
 		if (x) { e.preventDefault(); actions.toggleAllInlineDiffs(); return; }
+		const s = e.target.closest("#showrebase");
+		if (s) { e.preventDefault(); toggleRebaseFiles(); return; }
 		// Clicking a row moves the cursor there, and anywhere in the bar
 		// of a change or a file opens it: the title is a small target for
 		// something the whole row stands for. Controls inside the row do
@@ -666,12 +668,36 @@
 		});
 	}
 
+	// toggleRebaseFiles shows or hides the files the change does not touch,
+	// which the list leaves out until they are asked for. Rows appearing or
+	// disappearing renumbers everything, so the cursor starts over.
+	function toggleRebaseFiles() {
+		const table = document.querySelector("table.filelist");
+		const b = document.getElementById("showrebase");
+		if (!table || !b) return;
+		const hidden = table.classList.toggle("hiderebase");
+		const n = b.dataset.count;
+		b.textContent = (hidden ? "show " : "hide ") + n +
+			" rebase-only file" + (n === "1" ? "" : "s");
+		cursor = -1;
+		setCursor(0, false);
+	}
+
 	// selectFromHash puts the cursor on the row named in the fragment,
 	// which is how coming up from a change or a file lands back on it.
 	function selectFromHash() {
 		if (!location.hash) return false;
 		const want = decodeURIComponent(location.hash.slice(1));
-		const i = rows().findIndex((r) => r.dataset.key === want || r.dataset.file === want);
+		const named = (r) => r.dataset.key === want || r.dataset.file === want;
+		// Coming up from a rebase-only file lands on a row the list is
+		// hiding. Having asked to look at that file, the reader should find
+		// it where they left it rather than an empty-looking list.
+		const hiding = document.querySelector("table.filelist.hiderebase");
+		if (hiding && !rows().some(named) &&
+			Array.from(hiding.querySelectorAll("tr.rebaseonly")).some(named)) {
+			toggleRebaseFiles();
+		}
+		const i = rows().findIndex(named);
 		if (i < 0) return false;
 		setCursor(i);
 		return true;

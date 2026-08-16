@@ -135,10 +135,16 @@ Gerrit stops there: its file list has no idea which files are which, so
 the only way to learn that a file is nothing but rebase is to open it and
 find every line muted. Review carries the distinction up to the file list
 and into the keyboard, where it saves the trip. A file the change does not
-touch on either side reads "rebase only" instead of "mark reviewed", M
-passes over it on its way to the next unreviewed file, and n and p step
-over inherited chunks inside a file the same way they step over unchanged
-text. What is left under the cursor is the change's own work.
+touch on either side is left out of the list altogether, with a link at
+the foot of it offering to show the ones held back; M passes over such a
+file on its way to the next unreviewed one, and n and p step over
+inherited chunks inside a file the same way they step over unchanged
+text. What is left in front of you is the change's own work.
+
+The hidden rows are rendered all the same, so showing them is instant and
+needs no round trip, and asking for one of them by name — coming back up
+from it with u — shows them without being asked. Shown, they read "rebase
+only" where another file reads "mark reviewed".
 
 The commit message file has the same problem in miniature: its header
 names the parent commit, and a rebase changes that line every time,
