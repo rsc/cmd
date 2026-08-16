@@ -3,10 +3,20 @@
   <div id="viewinfo" hidden data-repo="{{.Repo}}"></div>
   <div class="pagehead">
     <h1>{{.Repo}}</h1>
-    <form method="post" action="{{.RepoURL}}/snapshot">
-      <input type="hidden" name="return" value="{{.RepoURL}}">
-      <button type="submit" title="Record a snapshot of every change (G)">Snapshot all</button>
-    </form>
+    <div class="pageactions">
+      {{if .Drafts}}
+      <form method="post" action="{{.RepoURL}}/publish">
+        <input type="hidden" name="return" value="{{.RepoURL}}">
+        <button type="submit" class="primary" title="Publish every draft in this repository (a)">
+          Publish all {{.Drafts}} draft{{if ne .Drafts 1}}s{{end}}
+        </button>
+      </form>
+      {{end}}
+      <form method="post" action="{{.RepoURL}}/snapshot">
+        <input type="hidden" name="return" value="{{.RepoURL}}">
+        <button type="submit" title="Record a snapshot of every change (G)">Snapshot all</button>
+      </form>
+    </div>
   </div>
 
   {{if not .Changes}}

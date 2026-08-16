@@ -655,6 +655,36 @@ func (d *DB) Publish(repo, key string) (int, error) {
 	return int(n), err
 }
 
+// PublishAll marks every draft comment in a repository as published,
+// across all of its changes, and reports how many it published.
+func (d *DB) PublishAll(repo string) (int, error) {
+	res, err := d.sql.Exec(`UPDATE comment SET draft = 0 WHERE draft = 1 AND thread_id IN (
+			SELECT t.id FROM thread t
+			JOIN snapshot s ON s.id = t.snapshot_id
+			JOIN change c ON c.id = s.change_id
+			WHERE c.repo = ?)`, repo)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
+}
+
+// DraftCount reports how many unpublished comments a repository holds.
+// It counts what PublishAll would publish, so that a button offering to
+// publish them can say how many without promising the wrong number: a
+// draft on a change that is no longer pending is still a draft.
+func (d *DB) DraftCount(repo string) (int, error) {
+	var n int
+	err := d.sql.QueryRow(`SELECT count(*) FROM comment
+		WHERE draft = 1 AND thread_id IN (
+			SELECT t.id FROM thread t
+			JOIN snapshot s ON s.id = t.snapshot_id
+			JOIN change c ON c.id = s.change_id
+			WHERE c.repo = ?)`, repo).Scan(&n)
+	return n, err
+}
+
 // SetReviewed records whether a file has been marked reviewed in a snapshot.
 func (d *DB) SetReviewed(snapshotID int64, file string, reviewed bool) error {
 	var err error

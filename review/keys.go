@@ -65,6 +65,8 @@ var keyHelp = []keySection{{
 		{Keys: []string{"x"}, Action: "toggleCheckbox", Text: "Toggle checkbox"},
 		{Keys: []string{"R"}, Action: "reload", Text: "Refresh list of changes"},
 		{Keys: []string{"G"}, Action: "grabSnapshot", Text: "Grab a snapshot of the selected change"},
+		{Keys: []string{"a"}, Action: "openPublish", Text: "Publish every draft in this repository"},
+		{Keys: []string{"P"}, Action: "openPublish", Text: "Publish every draft in this repository"},
 		{Keys: []string{"u"}, Action: "goRepos", Text: "Up to every repository"},
 	},
 }, {
