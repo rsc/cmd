@@ -1979,3 +1979,42 @@ func TestPublishOneStillWorks(t *testing.T) {
 		t.Errorf("DraftCount = %d, %v; want 1 left on the other change", n, err)
 	}
 }
+
+// TestSnapshotListLGTMChip checks that the snapshot list says which
+// snapshot was marked LGTM. The mark belongs to the snapshot it was put
+// on, so on a change with several it has to be visible where they are
+// listed, not only on the one being viewed.
+func TestSnapshotListLGTMChip(t *testing.T) {
+	r, _ := newStackedReview(t)
+	s := newServer(r.DB, r.Root(), r.Pin)
+	url := repoURL(t, r, "/c/"+topChangeKey)
+
+	page := mustGet(t, s, url)
+	if strings.Contains(page, "lgtmchip") {
+		t.Errorf("LGTM chip shown with nothing marked:\n%s", page)
+	}
+
+	snaps, err := r.DB.Snapshots(r.Root(), topChangeKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Mark the older snapshot, which is not the one the page opens on.
+	if err := r.DB.SetSnapshotLGTM(snaps[0].ID, true); err != nil {
+		t.Fatal(err)
+	}
+
+	page = mustGet(t, s, url)
+	if n := strings.Count(page, "lgtmchip"); n != 1 {
+		t.Errorf("%d LGTM chips, want 1:\n%s", n, page)
+	}
+	// On snapshot 1's row, not snapshot 2's. The base selector names the
+	// snapshots too, further up the page, so look only at the list.
+	list := page[strings.Index(page, `<ol class="timeline">`):]
+	list = list[:strings.Index(list, "</ol>")]
+	one := strings.Index(list, "Snapshot 1")
+	two := strings.Index(list, "Snapshot 2")
+	chip := strings.Index(list, "lgtmchip")
+	if one < 0 || two < 0 || chip < 0 || !(one < chip && chip < two) {
+		t.Errorf("the chip is not on the snapshot that was marked:\n%s", list)
+	}
+}

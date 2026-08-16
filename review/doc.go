@@ -254,6 +254,11 @@ reviewed marks it belongs to the snapshot it was put on, so a new snapshot
 arrives without it, and the change list shows the mark only when it is on
 the newest snapshot. Both marks appear in the change list as chips.
 
+Which snapshot carries it is shown in the change's own snapshot list, as a
+chip on that snapshot's line. The mark belongs to a snapshot rather than to
+the change, so where it sits is the whole of what it says: the same button
+at the top of the page speaks only for the snapshot being viewed.
+
 Because an amended commit is no longer reachable, git is free to garbage
 collect it and break an old snapshot. Grabbing a snapshot therefore also
 writes a ref under refs/reviewed to pin the commit. This is the only change

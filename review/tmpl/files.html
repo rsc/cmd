@@ -47,7 +47,10 @@
       <code>{{.ShortRev}}</code>
       <span class="when">{{since .Created}}</span>
       <span class="subject">{{.Subject}}</span>
-      <span class="snapreviewed">{{template "reviewedbutton" snapshotArg $.Repo .ID (index $.Reviewed .ID)}}</span>
+      <span class="snapmarks">
+        {{if index $.LGTMs .ID}}<span class="chip lgtmchip" title="this snapshot was marked LGTM">✓ LGTM</span>{{end}}
+        {{template "reviewedbutton" snapshotArg $.Repo .ID (index $.Reviewed .ID)}}
+      </span>
     </li>
     {{end}}
   </ol>
