@@ -44,7 +44,7 @@
     </td>
   </tr>
   {{else}}
-  <tr class="diffrow {{.Class}}" data-l="{{.L.Num}}" data-r="{{.R.Num}}">
+  <tr class="diffrow {{.RowClass}}" data-l="{{.L.Num}}" data-r="{{.R.Num}}">
     {{if not $p.Unified}}
     <td class="num {{.LeftClass}}">
       {{if and .L.Num $p.CanComment}}<button class="linenum" hx-get="{{.LeftFormURL}}" hx-target="closest tr" hx-swap="afterend">{{.L.Num}}</button>
@@ -219,7 +219,9 @@
 {{end}}
 
 {{define "reviewedbutton"}}
-<button class="reviewed{{if .Reviewed}} on{{end}}" hx-post="{{.URL}}" hx-target="this" hx-swap="outerHTML">
-  {{if .Reviewed}}✓ reviewed{{else}}mark reviewed{{end}}
+<button class="reviewed{{if .Reviewed}} on{{else if .RebaseOnly}} rebase{{end}}"
+        {{if and .RebaseOnly (not .Reviewed)}}title="this change does not touch this file: everything in it was done by a commit below"{{end}}
+        hx-post="{{.URL}}" hx-target="this" hx-swap="outerHTML">
+  {{if .Reviewed}}✓ reviewed{{else if .RebaseOnly}}rebase only{{else}}mark reviewed{{end}}
 </button>
 {{end}}

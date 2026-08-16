@@ -481,6 +481,11 @@
 			const changed = !all[i].classList.contains("equal");
 			if (!changed) { seenGap = true; continue; }
 			if (!seenGap) continue;
+			// A chunk a rebase brought along is not this change's work and
+			// has nothing in it to review, so step over it as if it were
+			// unchanged text. Clearing seenGap walks off the rest of the
+			// chunk the same way the current one is walked off above.
+			if (all[i].classList.contains("rebased")) { seenGap = false; continue; }
 			// For backward motion, land on the first row of the chunk.
 			if (d < 0) {
 				while (i - 1 >= 0 && !all[i - 1].classList.contains("equal")) i--;
@@ -576,12 +581,13 @@
 		// unreviewed are often behind you: the commit message sits first
 		// and is easy to leave for last. The file being left is skipped
 		// even if the page still lists it as unreviewed, since marking it
-		// is what got us here.
+		// is what got us here. A file the change does not touch is skipped
+		// as well: it is not unreviewed so much as nothing to review.
 		for (let n = 1; n <= list.length; n++) {
 			const i = (((here + step * n) % list.length) + list.length) % list.length;
 			const f = list[i];
 			if (f.path === view.file) continue;
-			if (!f.reviewed) { go(f.url); return; }
+			if (!f.reviewed && !f.rebase) { go(f.url); return; }
 		}
 		// Nothing left to review: up to the change.
 		actions.openFileList();

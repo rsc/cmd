@@ -165,7 +165,6 @@ button.primary:hover { background: #0d47a1; }
 .chip.working, .chip.current { background: var(--purple-50); color: var(--purple-900); }
 .chip.stalechip { background: var(--orange-50); color: var(--orange-900); }
 .chip.kind { background: var(--gray-200); color: var(--gray-700); }
-.chip.rebasechip { background: var(--light-rebased-remove-highlight-color); color: var(--orange-900); }
 .chip.reviewedchip { background: var(--green-700); color: #fff; font-weight: 500; }
 .chip.lgtmchip { background: var(--blue-700); color: #fff; font-weight: 500; }
 
@@ -229,6 +228,20 @@ button.reviewed.on {
 	font-weight: 500;
 }
 button.reviewed.on:hover { background: var(--green-800); color: #fff; }
+/* The third state: a file the change does not touch, in the same tan the
+ * diff uses for lines a rebase brought along. It is filled in rather than
+ * outlined, because there is nothing outstanding here, but not green,
+ * because nobody has read it. Pressing it still marks the file reviewed. */
+button.reviewed.rebase {
+	background: var(--light-rebased-remove-highlight-color);
+	border-color: var(--dark-rebased-remove-highlight-color);
+	color: var(--orange-900);
+}
+button.reviewed.rebase:hover {
+	background: var(--dark-rebased-remove-highlight-color);
+	border-color: var(--orange-900);
+	color: var(--orange-900);
+}
 /* LGTM is a verdict rather than progress, so it lights up blue. */
 button.reviewed.lgtm { font-size: 13px; padding: 5px 12px; color: var(--gerrit-blue-light); border-color: var(--gray-300); }
 button.reviewed.lgtm:hover { background: var(--blue-50); color: var(--blue-700); border-color: var(--blue-700); }
