@@ -584,6 +584,7 @@ type filesPage struct {
 	MoreLines   int
 	Files       []*fileInfo
 	Reviewed    map[int64]bool // snapshots marked reviewed, by snapshot ID
+	LGTMs       map[int64]bool // snapshots marked LGTM, by snapshot ID
 	LGTM        bool           // the snapshot being viewed is marked LGTM
 	Threads     []*threadFrag  // comment history, oldest first
 	Comments    int
@@ -663,6 +664,9 @@ func (s *server) files(w http.ResponseWriter, req *http.Request, r *Review) erro
 		p.Files = append(p.Files, info)
 	}
 	if p.Reviewed, err = r.DB.ReviewedSnapshots(r.Root(), c.Key); err != nil {
+		return err
+	}
+	if p.LGTMs, err = r.DB.LGTMSnapshots(r.Root(), c.Key); err != nil {
 		return err
 	}
 	if v.Target != nil {
