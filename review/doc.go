@@ -163,6 +163,9 @@ changed since you last looked at it; with nothing marked yet, the base is
 the commit's parent and you see the whole change. The base selector says
 "showing changes since you last reviewed" when it has made this choice, and
 picking Parent from it overrides the choice and shows the change entire.
+On a file the change does not touch at all it says instead that the changes
+in the file are entirely due to earlier commits, which is the more useful
+thing to know: there is nothing there to review.
 
 File marks are per snapshot: marking a file reviewed in snapshot 2 says
 nothing about snapshot 3, which is the point, since the file may have

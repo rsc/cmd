@@ -493,6 +493,11 @@ type nav struct {
 	FileParam   string
 	SelfURL     string
 	PageURL     string
+
+	// FileRebaseOnly reports that the file being viewed is one this change
+	// does not touch, so everything its diff shows was done below it. It
+	// is set only on a diff, where there is one file to say it about.
+	FileRebaseOnly bool
 }
 
 type filesPage struct {
@@ -743,6 +748,14 @@ type diffPage struct {
 	Drafts    int
 }
 
+// ShowRebaseNote reports whether the diff needs the note explaining its
+// muted colors. It does not when the base selector has already said the
+// whole file is inherited: the note would restate that in weaker words,
+// directly below it, and two sentences in a row read as two facts.
+func (p *diffPage) ShowRebaseNote() bool {
+	return p.Rebased && !(p.AutoBase && p.FileRebaseOnly)
+}
+
 // Cols is the number of columns in the diff table.
 func (p *diffPage) Cols() int {
 	if p.Unified {
@@ -832,6 +845,11 @@ func (s *server) diff(w http.ResponseWriter, req *http.Request, r *Review) error
 		Drafts:   countDrafts(threads),
 	}
 	p.SelfURL = s.diffURL(r, c.Key, name, base, target)
+	rebaseOnly, err := r.RebaseOnly(v)
+	if err != nil {
+		return err
+	}
+	p.FileRebaseOnly = rebaseOnly[name]
 	// The top bar stays put while the diff scrolls, so naming the file
 	// there answers "what am I looking at" without scrolling back up.
 	p.FileName = p.File.Name()
