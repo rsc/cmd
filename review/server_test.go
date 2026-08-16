@@ -1871,3 +1871,111 @@ func TestCommentLinkOpensAgainstLatest(t *testing.T) {
 		t.Errorf("comment is in thread cell %d of its row, want the first (left)", n)
 	}
 }
+
+// TestPublishAll covers the repository-wide publish button: it counts the
+// drafts it would publish, publishes all of them across every change, and
+// is offered only when there is something to publish.
+func TestPublishAll(t *testing.T) {
+	r, dir := newReview(t)
+	s := newServer(r.DB, r.Root(), r.Pin)
+
+	write(t, dir, "a.go", "package p\n")
+	do(t, dir, "git", "add", ".")
+	do(t, dir, "git", "commit", "-q", "-m", "one\n\nChange-Id: Ione\n")
+	write(t, dir, "b.go", "package q\n")
+	do(t, dir, "git", "add", ".")
+	do(t, dir, "git", "commit", "-q", "-m", "two\n\nChange-Id: Itwo\n")
+
+	// With no drafts anywhere, the button is not there.
+	page := mustGet(t, s, repoURL(t, r, ""))
+	if strings.Contains(page, "Publish all") {
+		t.Errorf("publish button offered with nothing to publish:\n%s", page)
+	}
+
+	// A draft on each change, and one already published for company.
+	for _, key := range []string{"Ione", "Itwo"} {
+		c, err := r.Change(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		snaps, err := r.EnsureSnapshot(c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := r.DB.AddThread(snaps[0].ID, CommitMsgFile, "new", 1, "", &Comment{
+			Author: "rsc", Body: "draft on " + key, Draft: true,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := r.DB.AddThread(snaps[0].ID, CommitMsgFile, "new", 2, "", &Comment{
+			Author: "rsc", Body: "published on " + key, Draft: false,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	page = mustGet(t, s, repoURL(t, r, ""))
+	if !strings.Contains(page, "Publish all 2 drafts") {
+		t.Errorf("publish button missing or miscounted:\n%s", page)
+	}
+
+	// Publishing with no change named publishes them all.
+	w := post(t, s, repoURL(t, r, "/publish"), url.Values{"return": {"/"}})
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("POST /publish = %d: %s", w.Code, w.Body.String())
+	}
+	for _, key := range []string{"Ione", "Itwo"} {
+		threads, err := r.DB.Threads(r.Root(), key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, th := range threads {
+			for _, c := range th.Comments {
+				if c.Draft {
+					t.Errorf("%s: %q is still a draft", key, c.Body)
+				}
+			}
+		}
+	}
+	if n, err := r.DB.DraftCount(r.Root()); err != nil || n != 0 {
+		t.Errorf("DraftCount = %d, %v; want 0", n, err)
+	}
+
+	// And the button goes away again.
+	page = mustGet(t, s, repoURL(t, r, ""))
+	if strings.Contains(page, "Publish all") {
+		t.Error("publish button still offered after publishing everything")
+	}
+}
+
+// TestPublishOneStillWorks checks that naming a change still publishes
+// only that change, now that naming nothing means all of them.
+func TestPublishOneStillWorks(t *testing.T) {
+	r, dir := newReview(t)
+	s := newServer(r.DB, r.Root(), r.Pin)
+
+	write(t, dir, "a.go", "package p\n")
+	do(t, dir, "git", "add", ".")
+	do(t, dir, "git", "commit", "-q", "-m", "one\n\nChange-Id: Ione\n")
+	write(t, dir, "b.go", "package q\n")
+	do(t, dir, "git", "add", ".")
+	do(t, dir, "git", "commit", "-q", "-m", "two\n\nChange-Id: Itwo\n")
+
+	for _, key := range []string{"Ione", "Itwo"} {
+		c, _ := r.Change(key)
+		snaps, err := r.EnsureSnapshot(c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := r.DB.AddThread(snaps[0].ID, CommitMsgFile, "new", 1, "", &Comment{
+			Author: "rsc", Body: "draft on " + key, Draft: true,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	post(t, s, repoURL(t, r, "/publish"), url.Values{"key": {"Ione"}, "return": {"/"}})
+	if n, err := r.DB.DraftCount(r.Root()); err != nil || n != 1 {
+		t.Errorf("DraftCount = %d, %v; want 1 left on the other change", n, err)
+	}
+}

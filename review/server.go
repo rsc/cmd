@@ -341,6 +341,7 @@ type changeInfo struct {
 type changesPage struct {
 	head
 	Changes []*changeInfo
+	Drafts  int // unpublished comments anywhere in the repository
 }
 
 func (s *server) changes(w http.ResponseWriter, req *http.Request, r *Review) error {
@@ -356,6 +357,9 @@ func (s *server) changes(w http.ResponseWriter, req *http.Request, r *Review) er
 		}
 		info.URL = s.filesURL(r, c.Key, "", "")
 		p.Changes = append(p.Changes, info)
+	}
+	if p.Drafts, err = r.DB.DraftCount(r.Root()); err != nil {
+		return err
 	}
 	return tmpl.ExecuteTemplate(w, "changes.html", p)
 }
@@ -1165,12 +1169,21 @@ func (s *server) snapshot(w http.ResponseWriter, req *http.Request, r *Review) e
 	return s.back(w, req)
 }
 
+// publish publishes the drafts on one change, or, with no change named,
+// every draft in the repository. Naming nothing meaning everything is the
+// same shape as the snapshot button next to it on the repository page.
 func (s *server) publish(w http.ResponseWriter, req *http.Request, r *Review) error {
-	c, err := r.Change(req.FormValue("key"))
-	if err != nil {
-		return err
+	if key := req.FormValue("key"); key != "" {
+		c, err := r.Change(key)
+		if err != nil {
+			return err
+		}
+		if _, err := r.DB.Publish(r.Root(), c.Key); err != nil {
+			return err
+		}
+		return s.back(w, req)
 	}
-	if _, err := r.DB.Publish(r.Root(), c.Key); err != nil {
+	if _, err := r.DB.PublishAll(r.Root()); err != nil {
 		return err
 	}
 	return s.back(w, req)
