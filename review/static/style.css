@@ -312,7 +312,7 @@ button.reviewed.lgtm.on:hover { background: var(--gerrit-blue-light); }
 }
 .timeline li.sel { border-left-color: var(--focused-line-outline-color); background: var(--blue-50); }
 .timeline .when, .timeline .subject { color: var(--gray-700); }
-.timeline .snapreviewed { margin-left: auto; }
+.timeline .snapmarks { margin-left: auto; display: flex; gap: 8px; align-items: center; }
 
 .autobase {
 	color: var(--gray-700);

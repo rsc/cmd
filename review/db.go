@@ -782,6 +782,11 @@ func (d *DB) SnapshotLGTM(snapshotID int64) (bool, error) {
 	return d.SnapshotMark(snapshotID, markLGTM)
 }
 
+// LGTMSnapshots returns the change's snapshots marked LGTM.
+func (d *DB) LGTMSnapshots(repo, key string) (map[int64]bool, error) {
+	return d.SnapshotMarks(repo, key, markLGTM)
+}
+
 // LastReviewedSnapshot returns the newest reviewed snapshot of a change
 // older than snapshot number n, or nil if there is none. It is what makes
 // opening a file show only what has changed since it was last reviewed.
