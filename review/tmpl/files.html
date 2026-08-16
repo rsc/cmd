@@ -57,10 +57,10 @@
     <button id="expandall" title="Show every diff inline (I)">Expand all</button>
   </div>
 
-  <table class="filelist">
+  <table class="filelist{{if .RebaseOnlyCount}} hiderebase{{end}}">
     <tbody>
       {{range .Files}}
-      <tr class="item filerow" data-href="{{.URL}}" data-inline="{{.InlineURL}}"
+      <tr class="item filerow{{if .RebaseOnly}} rebaseonly{{end}}" data-href="{{.URL}}" data-inline="{{.InlineURL}}"
           data-file="{{.Path}}" data-comments="{{.Comments}}" data-filter="{{.Path}}">
         <td class="status status-{{printf "%c" .Status}}">{{printf "%c" .Status}}</td>
         <td class="name"><a href="{{.URL}}">{{.Name}}</a></td>
@@ -75,6 +75,15 @@
       {{end}}
     </tbody>
   </table>
+
+  {{if .RebaseOnlyCount}}
+  <div class="rebasefoot">
+    <button id="showrebase" data-count="{{.RebaseOnlyCount}}"
+            title="files this change does not touch: everything in them was done by a commit below">
+      show {{.RebaseOnlyCount}} rebase-only file{{if ne .RebaseOnlyCount 1}}s{{end}}
+    </button>
+  </div>
+  {{end}}
 
   {{if .Threads}}
   <section class="history">
