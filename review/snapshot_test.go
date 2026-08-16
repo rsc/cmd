@@ -551,11 +551,11 @@ func TestMarkSnapshotFilesMarksFiles(t *testing.T) {
 	}
 }
 
-// TestSpreadReviewedAcrossRebase is the case this exists for: a commit low
+// TestSpreadMarksAcrossRebase is the case this exists for: a commit low
 // in a stack is edited, everything above it is rebased, and the commits
 // above have nothing new in them to read. Their reviewed marks should
 // survive the move.
-func TestSpreadReviewedAcrossRebase(t *testing.T) {
+func TestSpreadMarksAcrossRebase(t *testing.T) {
 	r, _ := newStackedReview(t)
 	top, err := r.Change(topChangeKey)
 	if err != nil {
@@ -574,7 +574,7 @@ func TestSpreadReviewedAcrossRebase(t *testing.T) {
 	if err := r.DB.SetSnapshotReviewed(snaps[0].ID, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.SpreadReviewed(topChangeKey); err != nil {
+	if err := r.SpreadMarks(topChangeKey); err != nil {
 		t.Fatal(err)
 	}
 	if on, err := r.DB.SnapshotReviewed(snaps[1].ID); err != nil {
@@ -626,9 +626,9 @@ func TestSpreadReviewedAcrossRebase(t *testing.T) {
 	}
 }
 
-// TestSpreadReviewedStopsAtRealWork checks the other half: a snapshot that
+// TestSpreadMarksStopsAtRealWork checks the other half: a snapshot that
 // changes something of the change's own is not carried over.
-func TestSpreadReviewedStopsAtRealWork(t *testing.T) {
+func TestSpreadMarksStopsAtRealWork(t *testing.T) {
 	r, dir := newReview(t)
 	write(t, dir, "a.go", "package p\n")
 	do(t, dir, "git", "add", ".")
@@ -840,5 +840,98 @@ func TestRebaseOnlyFileTheChangeEdits(t *testing.T) {
 		t.Fatal(err)
 	} else if only["shared.txt"] {
 		t.Error("the whole-change view called an edited file rebase-only")
+	}
+}
+
+// TestSpreadMarksCarriesLGTM checks that an LGTM travels across a rebase
+// like the reviewed mark does. What looked good is still there; stripping
+// the sign-off because a commit below it moved would ask for it again for
+// no reason anyone could point at.
+func TestSpreadMarksCarriesLGTM(t *testing.T) {
+	r, _ := newStackedReview(t)
+	top, err := r.Change(topChangeKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snaps, err := r.DB.Snapshots(r.Root(), topChangeKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest := snaps[len(snaps)-1]
+	if err := r.DB.SetSnapshotLGTM(latest.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.DB.SetSnapshotReviewed(latest.ID, true); err != nil {
+		t.Fatal(err)
+	}
+
+	// Rebase the change without touching it.
+	dir := r.Root()
+	topRev := top.Rev
+	do(t, dir, "git", "reset", "-q", "--hard", "HEAD~1")
+	write(t, dir, "deep.txt", "one\nTHREE\n")
+	do(t, dir, "git", "commit", "-q", "-a", "--amend", "--no-edit")
+	do(t, dir, "git", "cherry-pick", topRev)
+	if top, err = r.Change(topChangeKey); err != nil {
+		t.Fatal(err)
+	}
+	if _, created, err := r.Grab(top); err != nil || !created {
+		t.Fatalf("grab = %v, %v; want a new snapshot", created, err)
+	}
+
+	snaps, err = r.DB.Snapshots(r.Root(), topChangeKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := snaps[len(snaps)-1]
+	if on, err := r.DB.SnapshotLGTM(next.ID); err != nil {
+		t.Fatal(err)
+	} else if !on {
+		t.Error("the LGTM did not survive a rebase that changed nothing")
+	}
+	if on, err := r.DB.SnapshotReviewed(next.ID); err != nil {
+		t.Fatal(err)
+	} else if !on {
+		t.Error("the reviewed mark did not travel with it")
+	}
+}
+
+// TestSpreadMarksLGTMStopsAtRealWork checks the other half: an amended
+// snapshot has something new to look at, so the sign-off does not carry.
+func TestSpreadMarksLGTMStopsAtRealWork(t *testing.T) {
+	r, dir := newReview(t)
+	write(t, dir, "a.go", "package p\n")
+	do(t, dir, "git", "add", ".")
+	do(t, dir, "git", "commit", "-q", "-m", "one\n\nChange-Id: Ilgtm\n")
+
+	c, err := r.Change("Ilgtm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snaps, err := r.EnsureSnapshot(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.DB.SetSnapshotLGTM(snaps[0].ID, true); err != nil {
+		t.Fatal(err)
+	}
+
+	write(t, dir, "a.go", "package p\n\nvar X int\n")
+	do(t, dir, "git", "commit", "-q", "-a", "--amend", "--no-edit")
+	if c, err = r.Change("Ilgtm"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := r.Grab(c); err != nil {
+		t.Fatal(err)
+	}
+
+	snaps, err = r.DB.Snapshots(r.Root(), "Ilgtm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if on, err := r.DB.SnapshotLGTM(snaps[1].ID); err != nil {
+		t.Fatal(err)
+	} else if on {
+		t.Error("an amended snapshot inherited a sign-off it never earned")
 	}
 }

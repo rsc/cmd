@@ -21,8 +21,8 @@
         </td>
         <td class="snaps">
           {{if .Snapshots}}<span class="chip snap">{{.Snapshots}} snapshot{{if ne .Snapshots 1}}s{{end}}</span>{{end}}
-          {{if .Reviewed}}<span class="chip reviewedchip" title="the newest snapshot is marked reviewed">✓ reviewed</span>{{end}}
-          {{if .LGTM}}<span class="chip lgtmchip" title="the newest snapshot is marked LGTM">✓ LGTM</span>{{end}}
+          {{if .LGTM}}<span class="chip lgtmchip" title="the newest snapshot is marked LGTM">✓ LGTM</span>
+          {{else if .Reviewed}}<span class="chip reviewedchip" title="the newest snapshot is marked reviewed">✓ reviewed</span>{{end}}
         </td>
         <td class="counts">
           {{if .Comments}}<span class="chip">{{.Comments}} comment{{if ne .Comments 1}}s{{end}}</span>{{end}}

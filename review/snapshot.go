@@ -92,7 +92,7 @@ func (r *Review) Grab(c *Change) (s *Snapshot, created bool, err error) {
 	// a snapshot marked reviewed after the rebase that produced the one
 	// above it settles that one too, and grabbing is what a reviewer reaches
 	// for when the marks look out of date.
-	if err := r.SpreadReviewed(c.Key); err != nil {
+	if err := r.SpreadMarks(c.Key); err != nil {
 		return s, created, err
 	}
 	if !created || !r.Pin {
@@ -418,42 +418,62 @@ func (r *Review) MarkSnapshotFiles(snap *Snapshot, on bool) error {
 	return nil
 }
 
-// SpreadReviewed carries the reviewed mark forward from a snapshot to the
-// ones after it that hold nothing of the change's own work: a rebase moved
-// the change, and there is nothing new to read. Editing a commit low in a
-// stack would otherwise un-review every commit above it, not one of which
-// changed anything.
+// SpreadMarks carries a snapshot's marks forward to the ones after it that
+// hold nothing of the change's own work: a rebase moved the change, and
+// there is nothing new to read or to think again about. Editing a commit
+// low in a stack would otherwise strip the marks from every commit above
+// it, not one of which changed anything.
 //
-// It walks the whole chain, so marking an old snapshot reviewed reaches
-// the newest one through however many rebases lie between, and running it
-// twice changes nothing.
-func (r *Review) SpreadReviewed(key string) error {
+// Both marks travel. Reviewed says the snapshot was read, and it was read;
+// LGTM says it looked good, and what looked good is still there. Carrying
+// one without the other would leave a change reviewed but no longer signed
+// off for no reason anyone could point at.
+//
+// It walks the whole chain, so marking an old snapshot reaches the newest
+// one through however many rebases lie between, and running it twice
+// changes nothing.
+func (r *Review) SpreadMarks(key string) error {
 	snaps, err := r.DB.Snapshots(r.Root(), key)
 	if err != nil {
 		return err
 	}
 	for i := 1; i < len(snaps); i++ {
 		prev, next := snaps[i-1], snaps[i]
-		was, err := r.DB.SnapshotReviewed(prev.ID)
-		if err != nil {
-			return err
-		}
-		done, err := r.DB.SnapshotReviewed(next.ID)
-		if err != nil {
-			return err
-		}
-		if !was || done {
-			continue
-		}
-		ok, err := r.onlyInherited(prev, next)
-		if err != nil || !ok {
+		var carry []string
+		for _, kind := range []string{markReviewed, markLGTM} {
+			was, err := r.DB.SnapshotMark(prev.ID, kind)
 			if err != nil {
 				return err
 			}
+			done, err := r.DB.SnapshotMark(next.ID, kind)
+			if err != nil {
+				return err
+			}
+			if was && !done {
+				carry = append(carry, kind)
+			}
+		}
+		if len(carry) == 0 {
 			continue
 		}
-		if err := r.DB.SetSnapshotReviewed(next.ID, true); err != nil {
+		ok, err := r.onlyInherited(prev, next)
+		if err != nil {
 			return err
+		}
+		if !ok {
+			continue
+		}
+		for _, kind := range carry {
+			if err := r.DB.SetSnapshotMark(next.ID, kind, true); err != nil {
+				return err
+			}
+			// An LGTM says the snapshot was read, whatever the older data
+			// says, so it brings the reviewed mark with it.
+			if kind == markLGTM {
+				if err := r.DB.SetSnapshotReviewed(next.ID, true); err != nil {
+					return err
+				}
+			}
 		}
 		if err := r.MarkSnapshotFiles(next, true); err != nil {
 			return err

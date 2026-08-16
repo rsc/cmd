@@ -2018,3 +2018,94 @@ func TestSnapshotListLGTMChip(t *testing.T) {
 		t.Errorf("the chip is not on the snapshot that was marked:\n%s", list)
 	}
 }
+
+// TestLGTMMarksReviewed checks that saying a snapshot looks good says it
+// has been read: the snapshot and its files come out marked reviewed, and
+// taking the LGTM back leaves that record alone.
+func TestLGTMMarksReviewed(t *testing.T) {
+	r, _ := newStackedReview(t)
+	s := newServer(r.DB, r.Root(), r.Pin)
+
+	snaps, err := r.DB.Snapshots(r.Root(), topChangeKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := snaps[len(snaps)-1]
+	if on, err := r.DB.SnapshotReviewed(target.ID); err != nil || on {
+		t.Fatalf("snapshot starts out reviewed: %v, %v", on, err)
+	}
+
+	w := post(t, s, repoURL(t, r, "/f/lgtm"), url.Values{
+		"snapshot": {strconv.FormatInt(target.ID, 10)}, "on": {"1"},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("POST /f/lgtm = %d: %s", w.Code, w.Body.String())
+	}
+	// The page has to redraw: every reviewed button on it just changed.
+	if w.Header().Get("HX-Refresh") != "true" {
+		t.Error("the page was not asked to redraw")
+	}
+	if on, err := r.DB.SnapshotReviewed(target.ID); err != nil {
+		t.Fatal(err)
+	} else if !on {
+		t.Error("LGTM did not mark the snapshot reviewed")
+	}
+	marks, err := r.DB.Reviewed(target.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{CommitMsgFile, "shared.txt"} {
+		if !marks[want] {
+			t.Errorf("%s not marked reviewed; marks = %v", want, marks)
+		}
+	}
+
+	// Taking the LGTM back is not a statement that it went unread.
+	post(t, s, repoURL(t, r, "/f/lgtm"), url.Values{
+		"snapshot": {strconv.FormatInt(target.ID, 10)}, "on": {"0"},
+	})
+	if on, err := r.DB.SnapshotLGTM(target.ID); err != nil {
+		t.Fatal(err)
+	} else if on {
+		t.Error("the LGTM was not taken back")
+	}
+	if on, err := r.DB.SnapshotReviewed(target.ID); err != nil {
+		t.Fatal(err)
+	} else if !on {
+		t.Error("taking back the LGTM un-reviewed the snapshot")
+	}
+}
+
+// TestChangeListShowsOneChip checks that a change whose newest snapshot is
+// both reviewed and LGTM shows only the LGTM chip. Now that one implies the
+// other, showing both would say the same thing twice on every row.
+func TestChangeListShowsOneChip(t *testing.T) {
+	r, _ := newStackedReview(t)
+	s := newServer(r.DB, r.Root(), r.Pin)
+	snaps, err := r.DB.Snapshots(r.Root(), topChangeKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := snaps[len(snaps)-1]
+
+	// Reviewed alone shows the reviewed chip.
+	if err := r.DB.SetSnapshotReviewed(target.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	page := mustGet(t, s, repoURL(t, r, ""))
+	if !strings.Contains(page, "reviewedchip") || strings.Contains(page, "lgtmchip") {
+		t.Errorf("reviewed change does not show the reviewed chip alone:\n%s", page)
+	}
+
+	// LGTM replaces it rather than joining it.
+	if err := r.DB.SetSnapshotLGTM(target.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	page = mustGet(t, s, repoURL(t, r, ""))
+	if !strings.Contains(page, "lgtmchip") {
+		t.Error("LGTM chip missing from the change list")
+	}
+	if strings.Contains(page, "reviewedchip") {
+		t.Error("both chips shown; want the LGTM one alone")
+	}
+}

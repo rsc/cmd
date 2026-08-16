@@ -1596,7 +1596,7 @@ func (s *server) snapshotReviewed(w http.ResponseWriter, req *http.Request, r *R
 	if on {
 		// Marking an older snapshot reviewed can settle the newer ones too,
 		// if all that separates them is what a rebase carried in.
-		if err := r.SpreadReviewed(snap.Key); err != nil {
+		if err := r.SpreadMarks(snap.Key); err != nil {
 			return err
 		}
 	}
@@ -1611,12 +1611,30 @@ func (s *server) lgtm(w http.ResponseWriter, req *http.Request, r *Review) error
 	if err != nil {
 		return err
 	}
-	if _, err := r.DB.SnapshotByID(id); err != nil {
+	snap, err := r.DB.SnapshotByID(id)
+	if err != nil {
 		return err
 	}
 	on := req.FormValue("on") == "1"
 	if err := r.DB.SetSnapshotLGTM(id, on); err != nil {
 		return err
+	}
+	if on {
+		// Saying a snapshot looks good says it has been read. Taking the
+		// LGTM back does not take that back: the reading still happened,
+		// and the reviewed marks are a record of what has been looked at
+		// rather than of what was thought of it.
+		if err := r.DB.SetSnapshotReviewed(id, true); err != nil {
+			return err
+		}
+		if err := r.MarkSnapshotFiles(snap, true); err != nil {
+			return err
+		}
+		if err := r.SpreadMarks(snap.Key); err != nil {
+			return err
+		}
+		// The reviewed buttons all over the page have just changed.
+		w.Header().Set("HX-Refresh", "true")
 	}
 	return tmpl.ExecuteTemplate(w, "lgtmbutton", lgtmArg(r.Name, id, on))
 }
