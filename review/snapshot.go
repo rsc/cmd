@@ -79,20 +79,23 @@ func (r *Review) Grab(c *Change) (s *Snapshot, created bool, err error) {
 		return nil, false, err
 	}
 	s, created, err = r.DB.AddSnapshot(r.Root(), c)
-	if err != nil || !created {
+	if err != nil {
 		return s, created, err
 	}
-	if n := len(before); n > 0 {
+	if n := len(before); created && n > 0 {
 		if err := r.carryReviewed(before[n-1], s, c); err != nil {
 			return s, created, err
 		}
-		// A rebase that brought nothing of this change's own along leaves
-		// it as reviewed as it was.
-		if err := r.SpreadReviewed(c.Key); err != nil {
-			return s, created, err
-		}
 	}
-	if !r.Pin {
+	// A rebase that brought nothing of this change's own along leaves it as
+	// reviewed as it was. This runs whether or not a snapshot was recorded:
+	// a snapshot marked reviewed after the rebase that produced the one
+	// above it settles that one too, and grabbing is what a reviewer reaches
+	// for when the marks look out of date.
+	if err := r.SpreadReviewed(c.Key); err != nil {
+		return s, created, err
+	}
+	if !created || !r.Pin {
 		return s, created, nil
 	}
 	// Pin the commit so that amending the change away does not let the
