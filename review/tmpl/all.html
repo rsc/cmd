@@ -25,7 +25,7 @@
           {{else if .Reviewed}}<span class="chip reviewedchip" title="the newest snapshot is marked reviewed">✓ reviewed</span>{{end}}
         </td>
         <td class="counts">
-          {{if .Comments}}<span class="chip">{{.Comments}} comment{{if ne .Comments 1}}s{{end}}</span>{{end}}
+          {{if .Resolved}}<span class="chip done">{{.Resolved}} resolved</span>{{end}}
           {{if .Unresolved}}<span class="chip unresolved">{{.Unresolved}} unresolved</span>{{end}}
           {{if .Drafts}}<span class="chip draftchip">{{.Drafts}} draft</span>{{end}}
         </td>
