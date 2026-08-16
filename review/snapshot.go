@@ -562,38 +562,79 @@ func (r *Review) inherited(v *View, f *File) (old, new []byte, ok bool) {
 	return old, new, true
 }
 
-// RebaseOnly reports which of a view's files the change itself does not
-// touch on either side, so that everything their diffs show was done by a
-// commit below this one. Two file listings answer that, where diffing every
-// file to find out would cost four blob reads apiece, and it is worth
-// answering, because those are the files not to open.
+// RebaseOnly reports which of a view's files show nothing the change did
+// itself, so that everything in their diffs was done by a commit below
+// this one. Those are the files not to open.
+//
+// Most of them are settled by two file listings: a file the change touches
+// in neither snapshot can only be showing what a rebase brought. But a
+// file the change does edit can be wholly inherited too, when its own edit
+// to the file is the same on both sides and only the ground underneath it
+// moved — which is the common case when a rebase sweeps a whole tree. That
+// one has to be answered by reading the file, so it is asked only of the
+// files where it can be true: the ones the change edits and the rebase
+// touched as well.
 func (r *Review) RebaseOnly(v *View) (map[string]bool, error) {
 	if v.Base == nil || v.Target == nil || v.Base.Parent == v.Target.Parent {
 		return nil, nil
 	}
-	own := map[string]bool{}
-	for _, s := range []*Snapshot{v.Base, v.Target} {
-		files, err := r.Repo.Files(s.Parent, s.Rev)
-		if err != nil {
-			return nil, err
-		}
-		for _, f := range files {
-			own[f.Path] = true
-			if f.OldPath != "" {
-				own[f.OldPath] = true
-			}
-		}
+	own, err := r.pathSet(v.Base.Parent, v.Base.Rev, v.Target.Parent, v.Target.Rev)
+	if err != nil {
+		return nil, err
 	}
+	moved, err := r.pathSet(v.Base.Parent, v.Target.Parent)
+	if err != nil {
+		return nil, err
+	}
+
 	out := map[string]bool{}
 	for _, f := range v.Files {
 		// A file with no status is not in the diff at all; it is listed for
 		// its comments. Nothing was brought along by a rebase there either.
-		if f.Path == CommitMsgFile || f.Status == 0 || own[f.Path] || (f.OldPath != "" && own[f.OldPath]) {
+		if f.Path == CommitMsgFile || f.Status == 0 {
 			continue
 		}
-		out[f.Path] = true
+		switch {
+		case !own[f.Path] && (f.OldPath == "" || !own[f.OldPath]):
+			out[f.Path] = true
+		case moved[f.Path] || (f.OldPath != "" && moved[f.OldPath]):
+			if r.allInherited(v, f) {
+				out[f.Path] = true
+			}
+		}
 	}
 	return out, nil
+}
+
+// pathSet returns every path touched between the given pairs of revisions.
+func (r *Review) pathSet(revs ...string) (map[string]bool, error) {
+	set := map[string]bool{}
+	for i := 0; i+1 < len(revs); i += 2 {
+		files, err := r.Repo.Files(revs[i], revs[i+1])
+		if err != nil {
+			return nil, err
+		}
+		for _, f := range files {
+			set[f.Path] = true
+			if f.OldPath != "" {
+				set[f.OldPath] = true
+			}
+		}
+	}
+	return set, nil
+}
+
+// allInherited reports whether every changed line of a file's diff came
+// along with a rebase. A file with nothing changed in it is not inherited
+// but unchanged, and says so by answering false.
+func (r *Review) allInherited(v *View, f *File) bool {
+	old, new, err := r.Contents(v, f)
+	if err != nil {
+		return false
+	}
+	rows := Diff(old, new).Rows
+	r.MarkInherited(v, f, rows)
+	return AllRebased(rows)
 }
 
 // PlaceThreads decides where each of a change's comment threads should be

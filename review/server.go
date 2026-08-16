@@ -144,6 +144,51 @@ type server struct {
 
 	mu   sync.Mutex
 	open map[string]*Review // by repository path
+
+	// rebase remembers which files a comparison holds nothing of the
+	// change's own work in. Working that out means reading every file the
+	// change edits that the rebase touched as well, which on a rebase
+	// across a whole tree is most of them; but a snapshot never moves, so
+	// the answer for a pair of revisions is settled once and for all.
+	rebaseMu sync.Mutex
+	rebase   map[string]map[string]bool
+}
+
+// rebaseCacheMax is how many comparisons to remember. Each is a handful of
+// file names, and a review moves through few enough of them that this is
+// never reached in one sitting; it is here so that a server left running
+// for weeks cannot grow without bound.
+const rebaseCacheMax = 64
+
+// rebaseOnly is RebaseOnly with its answer remembered. The working tree is
+// not cached, and does not reach here: it has no snapshot to compare from.
+func (s *server) rebaseOnly(r *Review, v *View) (map[string]bool, error) {
+	if v.Base == nil || v.Target == nil {
+		return nil, nil
+	}
+	key := r.Root() + "\x00" + v.BaseRev + "\x00" + v.TargetRev
+
+	s.rebaseMu.Lock()
+	got, ok := s.rebase[key]
+	s.rebaseMu.Unlock()
+	if ok {
+		return got, nil
+	}
+
+	out, err := r.RebaseOnly(v)
+	if err != nil {
+		return nil, err
+	}
+	s.rebaseMu.Lock()
+	defer s.rebaseMu.Unlock()
+	if len(s.rebase) >= rebaseCacheMax {
+		s.rebase = nil
+	}
+	if s.rebase == nil {
+		s.rebase = make(map[string]map[string]bool)
+	}
+	s.rebase[key] = out
+	return out, nil
 }
 
 // newServer serves every repository in db. home, if not empty, is the
@@ -580,7 +625,7 @@ func (s *server) files(w http.ResponseWriter, req *http.Request, r *Review) erro
 		}
 	}
 
-	rebaseOnly, err := r.RebaseOnly(v)
+	rebaseOnly, err := s.rebaseOnly(r, v)
 	if err != nil {
 		return err
 	}
@@ -908,11 +953,9 @@ func (s *server) diff(w http.ResponseWriter, req *http.Request, r *Review) error
 		Drafts:   countDrafts(threads),
 	}
 	p.SelfURL = s.diffURL(r, c.Key, name, base, target)
-	rebaseOnly, err := r.RebaseOnly(v)
-	if err != nil {
-		return err
-	}
-	p.FileRebaseOnly = rebaseOnly[name]
+	// The rows are already marked, so whether this file holds anything the
+	// change did itself is there to be read rather than worked out again.
+	p.FileRebaseOnly = AllRebased(fd.Rows)
 	// The top bar stays put while the diff scrolls, so naming the file
 	// there answers "what am I looking at" without scrolling back up.
 	p.FileName = p.File.Name()
@@ -931,6 +974,12 @@ func (s *server) diff(w http.ResponseWriter, req *http.Request, r *Review) error
 		if reviewed, err = r.DB.Reviewed(v.Target.ID); err != nil {
 			return err
 		}
+	}
+	// M steps over the files that hold nothing of the change's own work, so
+	// the list it walks has to know which those are.
+	rebaseOnly, err := s.rebaseOnly(r, v)
+	if err != nil {
+		return err
 	}
 	var entries []fileEntry
 	for i, ff := range v.Files {
