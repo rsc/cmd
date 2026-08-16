@@ -375,8 +375,8 @@ func (s *server) headAll(title string) head {
 type changeInfo struct {
 	*Change
 	Snapshots  int
-	Comments   int
-	Unresolved int
+	Resolved   int // comment threads settled
+	Unresolved int // comment threads still open
 	Drafts     int
 	Reviewed   bool // the newest snapshot has been marked reviewed
 	LGTM       bool // the newest snapshot has been marked LGTM
@@ -514,8 +514,9 @@ func (s *server) changeInfo(r *Review, c *Change) (*changeInfo, error) {
 		return nil, err
 	}
 	for _, t := range threads {
-		info.Comments += len(t.Comments)
-		if !t.Resolved {
+		if t.Resolved {
+			info.Resolved++
+		} else {
 			info.Unresolved++
 		}
 		for _, cm := range t.Comments {
@@ -530,20 +531,24 @@ func (s *server) changeInfo(r *Review, c *Change) (*changeInfo, error) {
 // fileInfo summarizes one file for the file list and diff header.
 type fileInfo struct {
 	*File
-	Comments   int
-	Unresolved int
+	Resolved   int // comment threads settled
+	Unresolved int // comment threads still open
 	Reviewed   bool
 	RebaseOnly bool // nothing in this file's diff was done by this change
 	URL        string
 	InlineURL  string // the same diff as a fragment, for the file list
 }
 
+// Threads is how many comment threads the file carries, of either kind.
+// The places that only ask whether there are any use this.
+func (f *fileInfo) Threads() int { return f.Resolved + f.Unresolved }
+
 // Hidden reports whether the file list holds this file back. A file the
 // change does not touch has nothing in it to review — unless somebody has
 // already written a comment on it, which is a reason to look no matter
 // who put the lines there.
 func (f *fileInfo) Hidden() bool {
-	return f.RebaseOnly && f.Comments == 0
+	return f.RebaseOnly && f.Threads() == 0
 }
 
 // Name returns the file's display name.
@@ -587,8 +592,8 @@ type filesPage struct {
 	LGTMs       map[int64]bool // snapshots marked LGTM, by snapshot ID
 	LGTM        bool           // the snapshot being viewed is marked LGTM
 	Threads     []*threadFrag  // comment history, oldest first
-	Comments    int
-	Unresolved  int
+	Resolved    int            // comment threads settled
+	Unresolved  int            // comment threads still open
 	Drafts      int
 
 	// RebaseOnlyCount is how many of Files the change does not touch. They
@@ -653,8 +658,9 @@ func (s *server) files(w http.ResponseWriter, req *http.Request, r *Review) erro
 			if t.File != f.Path {
 				continue
 			}
-			info.Comments += len(t.Comments)
-			if !t.Resolved {
+			if t.Resolved {
+				info.Resolved++
+			} else {
 				info.Unresolved++
 			}
 		}
@@ -687,8 +693,9 @@ func (s *server) files(w http.ResponseWriter, req *http.Request, r *Review) erro
 		return history[i].ID < history[j].ID
 	})
 	for _, t := range history {
-		p.Comments += len(t.Comments)
-		if !t.Resolved {
+		if t.Resolved {
+			p.Resolved++
+		} else {
 			p.Unresolved++
 		}
 		p.Threads = append(p.Threads, s.threadFrag(r, t, c.Key, v.LatestN()))
@@ -969,7 +976,7 @@ func (s *server) diff(w http.ResponseWriter, req *http.Request, r *Review) error
 	type fileEntry struct {
 		Path       string `json:"path"`
 		URL        string `json:"url"`
-		Comments   int    `json:"comments"`
+		Threads    int    `json:"comments"`
 		Reviewed   bool   `json:"reviewed"`
 		RebaseOnly bool   `json:"rebase"`
 	}
@@ -990,13 +997,13 @@ func (s *server) diff(w http.ResponseWriter, req *http.Request, r *Review) error
 		n := 0
 		for _, t := range threads {
 			if t.File == ff.Path {
-				n += len(t.Comments)
+				n++
 			}
 		}
 		entries = append(entries, fileEntry{
 			Path:       ff.Path,
 			URL:        s.diffURL(r, c.Key, ff.Path, base, target),
-			Comments:   n,
+			Threads:    n,
 			Reviewed:   reviewed[ff.Path],
 			RebaseOnly: rebaseOnly[ff.Path],
 		})
