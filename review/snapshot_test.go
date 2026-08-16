@@ -5,6 +5,7 @@
 package main
 
 import (
+	"fmt"
 	"slices"
 	"testing"
 )
@@ -768,5 +769,76 @@ func TestOnlyInheritedUnknownParentKey(t *testing.T) {
 		t.Fatal(err)
 	} else if ok {
 		t.Error("a move onto a different parent change was taken for a rebase")
+	}
+}
+
+// TestRebaseOnlyFileTheChangeEdits is the case the cheap test misses: the
+// change edits a file, the rebase edits it too, and the change's own edit
+// is the same on both sides, so the diff between the two snapshots holds
+// nothing the change did.
+func TestRebaseOnlyFileTheChangeEdits(t *testing.T) {
+	r, dir := newReview(t)
+	lines := func(first, tenth string) string {
+		out := first + "\n"
+		for i := 2; i <= 9; i++ {
+			out += fmt.Sprintf("line %d\n", i)
+		}
+		return out + tenth + "\n"
+	}
+	write(t, dir, "shared.txt", lines("top of file", "bottom of file"))
+	do(t, dir, "git", "add", ".")
+	do(t, dir, "git", "commit", "-q", "-m", "lower\n\nChange-Id: Ilower\n")
+
+	// The upper change edits the last line, and nothing else.
+	write(t, dir, "shared.txt", lines("top of file", "bottom of file EDITED"))
+	do(t, dir, "git", "commit", "-q", "-a", "-m", "upper\n\nChange-Id: Iupper\n")
+
+	upper, err := r.Change("Iupper")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.EnsureSnapshot(upper); err != nil {
+		t.Fatal(err)
+	}
+	upperRev := upper.Rev
+
+	// Edit the lower change's first line and replay the upper one.
+	do(t, dir, "git", "reset", "-q", "--hard", "HEAD~1")
+	write(t, dir, "shared.txt", lines("top of file REWRITTEN", "bottom of file"))
+	do(t, dir, "git", "commit", "-q", "-a", "--amend", "--no-edit")
+	do(t, dir, "git", "cherry-pick", upperRev)
+
+	if upper, err = r.Change("Iupper"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := r.Grab(upper); err != nil {
+		t.Fatal(err)
+	}
+
+	v, err := r.View(upper, "1", "2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.File("shared.txt") == nil {
+		t.Fatal("shared.txt is not in the snapshot-to-snapshot diff")
+	}
+	only, err := r.RebaseOnly(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !only["shared.txt"] {
+		t.Error("a file whose only difference came from below was not called rebase-only")
+	}
+
+	// Against the parent the change's own edit is there to see, so it is
+	// not rebase-only in that view.
+	pv, err := r.View(upper, "parent", "2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if only, err := r.RebaseOnly(pv); err != nil {
+		t.Fatal(err)
+	} else if only["shared.txt"] {
+		t.Error("the whole-change view called an edited file rebase-only")
 	}
 }

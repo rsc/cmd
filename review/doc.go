@@ -141,6 +141,16 @@ new lines into a single chunk matches nothing and stays unmarked, which
 errs toward showing a line as the change's own work rather than muting
 one that is.
 
+A file is called rebase-only when every changed line in it is inherited.
+Most are settled by two file listings: a file the change touches in
+neither snapshot can only be showing what a rebase brought. But a file
+the change does edit can be wholly inherited too, when its own edit is
+the same on both sides and only the ground underneath it moved, which is
+the common case when a rebase sweeps a whole tree. Answering that means
+reading the file, so it is asked only where it can be true — of the files
+the change edits that the rebase touched as well — and the answer is
+remembered, since a snapshot never moves.
+
 Gerrit stops there: its file list has no idea which files are which, so
 the only way to learn that a file is nothing but rebase is to open it and
 find every line muted. Review carries the distinction up to the file list

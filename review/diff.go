@@ -384,6 +384,23 @@ func AnyRebased(rows []Row) bool {
 	return false
 }
 
+// AllRebased reports whether every changed row is inherited from a rebase,
+// so that the diff holds nothing the change did itself. A diff with no
+// changed rows at all reports false: nothing was inherited there either.
+func AllRebased(rows []Row) bool {
+	changed := false
+	for _, r := range rows {
+		if r.Kind == RowEqual || r.Kind == RowSkip {
+			continue
+		}
+		if !r.Rebased {
+			return false
+		}
+		changed = true
+	}
+	return changed
+}
+
 // eachChunk calls f on each maximal run of changed rows.
 func eachChunk(rows []Row, f func([]Row)) {
 	for i := 0; i < len(rows); {
