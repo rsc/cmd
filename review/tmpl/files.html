@@ -60,7 +60,7 @@
   <table class="filelist{{if .RebaseOnlyCount}} hiderebase{{end}}">
     <tbody>
       {{range .Files}}
-      <tr class="item filerow{{if .RebaseOnly}} rebaseonly{{end}}" data-href="{{.URL}}" data-inline="{{.InlineURL}}"
+      <tr class="item filerow{{if .Hidden}} rebaseonly{{end}}" data-href="{{.URL}}" data-inline="{{.InlineURL}}"
           data-file="{{.Path}}" data-comments="{{.Comments}}" data-filter="{{.Path}}">
         <td class="status status-{{printf "%c" .Status}}">{{printf "%c" .Status}}</td>
         <td class="name"><a href="{{.URL}}">{{.Name}}</a></td>

@@ -1705,3 +1705,47 @@ func TestRebaseOnlyFilesHidden(t *testing.T) {
 		}
 	}
 }
+
+// TestRebaseOnlyWithCommentsShown checks that a comment keeps a file in the
+// list. The file is still one the change does not touch, so it still reads
+// rebase-only; what it is not is out of sight.
+func TestRebaseOnlyWithCommentsShown(t *testing.T) {
+	r, _ := newStackedReview(t)
+	s := newServer(r.DB, r.Root(), r.Pin)
+	url := repoURL(t, r, "/c/"+topChangeKey+"?base=1&s=2")
+
+	// Without a comment, deep.txt is held back.
+	files := mustGet(t, s, url)
+	if !strings.Contains(files, "show 1 rebase-only file") {
+		t.Fatalf("deep.txt is not held back to begin with:\n%s", files)
+	}
+
+	snaps, err := r.DB.Snapshots(r.Root(), topChangeKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := snaps[len(snaps)-1]
+	if _, err := r.DB.AddThread(target.ID, "deep.txt", "new", 2, "two BOTTOM-V2", &Comment{
+		Author: "rsc", Body: "did this come from below?", Draft: false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	files = mustGet(t, s, url)
+	if strings.Contains(files, "rebaseonly") {
+		t.Error("a file with a comment on it is still held back")
+	}
+	// Nothing left to hide, so the link goes away.
+	for _, unwanted := range []string{"hiderebase", "rebase-only file"} {
+		if strings.Contains(files, unwanted) {
+			t.Errorf("file list still mentions %q with nothing to hide", unwanted)
+		}
+	}
+	// The state is unchanged: the change still does not touch the file.
+	if !strings.Contains(files, "rebase only") {
+		t.Error("the file stopped reading rebase-only when it was shown")
+	}
+	if !strings.Contains(files, "1 comment") {
+		t.Error("the comment count is missing")
+	}
+}
