@@ -235,7 +235,11 @@ thing to know: there is nothing there to review.
 
 File marks are per snapshot: marking a file reviewed in snapshot 2 says
 nothing about snapshot 3, which is the point, since the file may have
-changed. File marks do not affect the base; only snapshot marks do.
+changed. A file that did not change carries its mark forward, though, so
+that a new snapshot touching one file does not ask for the whole change
+to be read again. The commit message carries too when a rebase has only
+moved the line naming its parent, which is not a word of the message
+changing. File marks do not affect the base; only snapshot marks do.
 
 A snapshot holding nothing but a rebase inherits both marks from the one
 before it. Editing a commit low in a stack rewrites every commit above it,

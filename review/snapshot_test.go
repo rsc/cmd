@@ -935,3 +935,148 @@ func TestSpreadMarksLGTMStopsAtRealWork(t *testing.T) {
 		t.Error("an amended snapshot inherited a sign-off it never earned")
 	}
 }
+
+// TestCarryReviewedAcrossRebasedMessage is the case that kept a commit
+// message asking to be read again: a rebase moves the line naming the
+// parent, and nothing else about the message changes.
+func TestCarryReviewedAcrossRebasedMessage(t *testing.T) {
+	r, _ := newStackedReview(t)
+	top, err := r.Change(topChangeKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snaps, err := r.DB.Snapshots(r.Root(), topChangeKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest := snaps[len(snaps)-1]
+	if err := r.DB.SetReviewed(latest.ID, CommitMsgFile, true); err != nil {
+		t.Fatal(err)
+	}
+
+	// Rebase the change onto a rewritten commit below it, leaving its own
+	// work and its message alone.
+	dir := r.Root()
+	topRev := top.Rev
+	do(t, dir, "git", "reset", "-q", "--hard", "HEAD~1")
+	write(t, dir, "deep.txt", "one\nTHREE\n")
+	do(t, dir, "git", "commit", "-q", "-a", "--amend", "--no-edit")
+	do(t, dir, "git", "cherry-pick", topRev)
+	if top, err = r.Change(topChangeKey); err != nil {
+		t.Fatal(err)
+	}
+	if _, created, err := r.Grab(top); err != nil || !created {
+		t.Fatalf("grab = %v, %v; want a new snapshot", created, err)
+	}
+
+	snaps, err = r.DB.Snapshots(r.Root(), topChangeKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := snaps[len(snaps)-1]
+	// The parent line moved, so the two renderings differ ...
+	if string(commitMsgContent("git", latest.Change())) == string(commitMsgContent("git", next.Change())) {
+		t.Fatal("the fixture's parent line did not move")
+	}
+	// ... but the message did not, so the mark carries.
+	marks, err := r.DB.Reviewed(next.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !marks[CommitMsgFile] {
+		t.Error("the commit message was left unreviewed after a rebase moved its parent line")
+	}
+}
+
+// TestCarryReviewedStopsAtRewordedMessage checks the other half: rewording
+// is a change to read, however the parent line moved.
+func TestCarryReviewedStopsAtRewordedMessage(t *testing.T) {
+	r, dir := newReview(t)
+	write(t, dir, "a.go", "package p\n")
+	do(t, dir, "git", "add", ".")
+	do(t, dir, "git", "commit", "-q", "-m", "before\n\nChange-Id: Iword\n")
+
+	c, err := r.Change("Iword")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snaps, err := r.EnsureSnapshot(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.DB.SetReviewed(snaps[0].ID, CommitMsgFile, true); err != nil {
+		t.Fatal(err)
+	}
+
+	do(t, dir, "git", "commit", "-q", "--amend", "-m", "after, and rather different\n\nChange-Id: Iword\n")
+	if c, err = r.Change("Iword"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := r.Grab(c); err != nil {
+		t.Fatal(err)
+	}
+	snaps, err = r.DB.Snapshots(r.Root(), "Iword")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if marks, err := r.DB.Reviewed(snaps[1].ID); err != nil {
+		t.Fatal(err)
+	} else if marks[CommitMsgFile] {
+		t.Error("a reworded message kept its reviewed mark")
+	}
+}
+
+// TestSpreadMarksSettlesFileMarks checks that the file marks are settled
+// along the chain and not only when a snapshot is first recorded, so that
+// grabbing repairs a chain recorded by an older binary.
+func TestSpreadMarksSettlesFileMarks(t *testing.T) {
+	r, dir := newReview(t)
+	write(t, dir, "a.go", "package p\n")
+	write(t, dir, "b.go", "package q\n")
+	do(t, dir, "git", "add", ".")
+	do(t, dir, "git", "commit", "-q", "-m", "two files\n\nChange-Id: Isettle\n")
+
+	c, err := r.Change("Isettle")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.EnsureSnapshot(c); err != nil {
+		t.Fatal(err)
+	}
+	// A second snapshot touching only a.go.
+	write(t, dir, "a.go", "package p\n\nvar X int\n")
+	do(t, dir, "git", "commit", "-q", "-a", "--amend", "--no-edit")
+	if c, err = r.Change("Isettle"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := r.Grab(c); err != nil {
+		t.Fatal(err)
+	}
+	snaps, err := r.DB.Snapshots(r.Root(), "Isettle")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Mark b.go in the older snapshot only, as if it had been marked after
+	// the newer one was recorded.
+	if err := r.DB.SetReviewed(snaps[0].ID, "b.go", true); err != nil {
+		t.Fatal(err)
+	}
+	if marks, _ := r.DB.Reviewed(snaps[1].ID); marks["b.go"] {
+		t.Fatal("b.go is already marked in the newer snapshot")
+	}
+
+	if err := r.SpreadMarks("Isettle"); err != nil {
+		t.Fatal(err)
+	}
+	marks, err := r.DB.Reviewed(snaps[1].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !marks["b.go"] {
+		t.Error("an unchanged file's mark was not settled forward")
+	}
+	if marks["a.go"] {
+		t.Error("a file that changed was marked reviewed")
+	}
+}
