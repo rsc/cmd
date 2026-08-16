@@ -627,8 +627,8 @@ func TestChangePageCommentHistory(t *testing.T) {
 	if !strings.Contains(body, "f=%2FCOMMIT_MSG&amp;s=2#thread-") {
 		t.Errorf("comment on the newest snapshot did not link to it plainly:\n%s", body)
 	}
-	// Drafts and unresolved counts are summarized.
-	for _, want := range []string{"2 comments", "2 unresolved", "1 draft"} {
+	// The summary counts threads by whether they are settled, not comments.
+	for _, want := range []string{"2 unresolved", "1 draft"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("history summary missing %q", want)
 		}
@@ -675,12 +675,16 @@ func TestFileListCounts(t *testing.T) {
 
 	body := mustGet(t, s, repoURL(t, r, "/c/Itest1"))
 	counts := fileCounts(t, body, "a.go")
-	// 3 comments across 2 threads, 1 thread still unresolved.
-	if !strings.Contains(counts, "3 comments") {
-		t.Errorf("file row does not report the comment count:\n%s", counts)
+	// 3 comments across 2 threads, one settled and one not: the row counts
+	// the threads, so the extra reply does not inflate anything.
+	if !strings.Contains(counts, "1 resolved") {
+		t.Errorf("file row does not report the resolved thread:\n%s", counts)
 	}
 	if !strings.Contains(counts, "1 unresolved") {
-		t.Errorf("file row does not report the unresolved count:\n%s", counts)
+		t.Errorf("file row does not report the unresolved thread:\n%s", counts)
+	}
+	if strings.Contains(counts, "comment") {
+		t.Errorf("file row still counts comments:\n%s", counts)
 	}
 
 	// A file with no comments reports neither.
@@ -740,22 +744,22 @@ func TestChangeListCounts(t *testing.T) {
 	}
 
 	counts := changeCounts(t, mustGet(t, s, "/"), "Itest1")
-	// 3 comments across 2 threads, 1 thread unresolved, and both drafts
-	// still unpublished.
-	for _, want := range []string{"3 comments", "1 unresolved", "2 draft"} {
+	// 3 comments across 2 threads, one settled and one not, and both
+	// drafts still unpublished.
+	for _, want := range []string{"1 resolved", "1 unresolved", "2 draft"} {
 		if !strings.Contains(counts, want) {
 			t.Errorf("change row missing %q:\n%s", want, counts)
 		}
 	}
 
-	// After publishing, the comment and unresolved counts remain but the
-	// draft chip goes away.
+	// After publishing, the thread counts remain but the draft chip goes
+	// away.
 	post(t, s, repoURL(t, r, "/publish"), url.Values{"key": {"Itest1"}})
 	counts = changeCounts(t, mustGet(t, s, "/"), "Itest1")
 	if strings.Contains(counts, "draft") {
 		t.Errorf("draft chip survived publishing:\n%s", counts)
 	}
-	for _, want := range []string{"3 comments", "1 unresolved"} {
+	for _, want := range []string{"1 resolved", "1 unresolved"} {
 		if !strings.Contains(counts, want) {
 			t.Errorf("change row missing %q after publishing:\n%s", want, counts)
 		}
@@ -1751,8 +1755,8 @@ func TestRebaseOnlyWithCommentsShown(t *testing.T) {
 	if !strings.Contains(files, "rebase only") {
 		t.Error("the file stopped reading rebase-only when it was shown")
 	}
-	if !strings.Contains(files, "1 comment") {
-		t.Error("the comment count is missing")
+	if !strings.Contains(files, "1 unresolved") {
+		t.Error("the thread count is missing")
 	}
 }
 
