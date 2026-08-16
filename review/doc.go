@@ -299,6 +299,13 @@ The keyboard shortcuts are Gerrit's, so muscle memory carries over. Press
 move between diff chunks, N and P between comment threads, c writes a
 comment, and ⌘-Enter saves it. G grabs a snapshot.
 
+Both n and p bring the chunk they land on up to about ten lines below the
+top of the window, so that what follows it is on screen: a chunk read with
+its consequences off the bottom edge is half a chunk. Near the end of a
+file they stop once the bottom of it is in view, since there is nothing
+past that to scroll to, and a chunk already near the top is left where it
+is rather than nudged.
+
 Pressing n on the last chunk of a file parks the cursor on its last line
 and shows a bar saying that pressing n again moves to the next file that
 is not yet marked reviewed; p does the same backwards. A file that did not

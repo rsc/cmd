@@ -485,11 +485,46 @@
 			if (d < 0) {
 				while (i - 1 >= 0 && !all[i - 1].classList.contains("equal")) i--;
 			}
-			setCursor(i);
+			scrollChunk(setCursor(i, false));
 			return true;
 		}
-		setCursor(d > 0 ? all.length - 1 : 0);
+		scrollChunk(setCursor(d > 0 ? all.length - 1 : 0, false));
 		return false;
+	}
+
+	// topLines is how far below the top of the page n and p leave the chunk
+	// they land on: a margin wide enough to keep the lines just above it in
+	// sight, with the rest of the window left for what comes after.
+	const topLines = 10;
+
+	// scrollChunk brings a chunk up to the top of the page instead of barely
+	// into view. scrollIntoView's "nearest" scrolls as little as it can, so a
+	// chunk below the fold ends up sitting on the bottom edge with its own
+	// consequences off screen, which is the one place a diff is no use.
+	function scrollChunk(row) {
+		if (!row) return;
+		// The top bar is pinned over the page, so the top of the page is
+		// where the bar ends rather than where the document begins.
+		const bar = document.querySelector(".topbar");
+		const barH = bar ? bar.getBoundingClientRect().height : 0;
+		const margin = barH + topLines * lineHeight();
+		const at = row.getBoundingClientRect().top;
+		// Near enough already: below the bar and no more than topLines down.
+		// Scrolling a chunk that is right there only costs the reader the
+		// place they had.
+		if (at >= barH && at <= margin) return;
+		// There is no scrolling past the end of the document, so a chunk near
+		// the end stops wherever showing the bottom of the file leaves it.
+		const max = Math.max(document.documentElement.scrollHeight - window.innerHeight, 0);
+		window.scrollTo(0, Math.min(Math.max(window.scrollY + at - margin, 0), max));
+	}
+
+	// A line is one row of the diff, whose height the stylesheet sets; ask
+	// for it rather than writing the number down here too.
+	function lineHeight() {
+		const t = document.getElementById("difftable");
+		const h = t ? parseFloat(getComputedStyle(t).lineHeight) : NaN;
+		return h > 0 ? h : 18;
 	}
 
 	// A file that did not change between the two revisions being compared
