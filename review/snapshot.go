@@ -494,22 +494,36 @@ func (r *Review) onlyInherited(prev, next *Snapshot) (bool, error) {
 			return false, nil
 		}
 	}
-	// The commit message is not one of the repository's files. Its parent
-	// line moves with every rebase, whatever moved, so that line is not a
-	// change to read; anything else in the message is.
+	// The commit message is not one of the repository's files. Both of the
+	// lines naming the parent are left out of the comparison and the parent
+	// is compared on its own below, so that a message reworded during the
+	// rebase is still caught.
 	kind := r.Repo.Kind()
-	return msgWithoutParent(kind, prev.Change()) == msgWithoutParent(kind, next.Change()), nil
+	if msgWithoutParents(kind, prev.Change()) != msgWithoutParents(kind, next.Change()) {
+		return false, nil
+	}
+	// Moving onto a different parent change is a real move, not a rebase
+	// underneath. But a snapshot recorded before parent keys were stored
+	// has none, and an unknown parent is not a different one: refusing
+	// there would leave every such snapshot blocking the carry for good,
+	// with the files already saying the change's own work is untouched.
+	if prev.ParentKey != "" && next.ParentKey != "" {
+		return prev.ParentKey == next.ParentKey, nil
+	}
+	return true, nil
 }
 
-// msgWithoutParent renders a commit message file without the line naming
-// the parent commit. That is the line a rebase always moves, which is why
-// the header names the parent twice: the other name stays put unless the
-// change really has moved onto something else, and it is left in here.
-func msgWithoutParent(kind string, c *Change) string {
+// msgWithoutParents renders a commit message file without either of the
+// lines naming its parent. The commit ID moves with every rebase, and the
+// stable name moves only when the change really has been put somewhere
+// else — which is worth knowing, and is why the caller asks about it
+// separately rather than by reading these lines.
+func msgWithoutParents(kind string, c *Change) string {
 	lines := strings.Split(string(commitMsgContent(kind, c)), "\n")
 	out := lines[:0]
 	for _, l := range lines {
-		if strings.HasPrefix(l, "Git Parent:") || strings.HasPrefix(l, "Parent:") {
+		if strings.HasPrefix(l, "Git Parent:") || strings.HasPrefix(l, "Parent:") ||
+			strings.HasPrefix(l, "JJ Parent:") || strings.HasPrefix(l, "Change Parent:") {
 			continue
 		}
 		out = append(out, l)
