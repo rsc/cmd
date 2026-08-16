@@ -237,6 +237,17 @@ where it now lives, marked with the snapshot it came from. If the text is
 gone entirely, the comment is listed at the top of the file and marked
 stale rather than silently dropped.
 
+Better than re-anchoring a comment is showing it where it fits. So the
+file:line link on a comment in a change's history opens the snapshot the
+comment was written against on the left and the newest one on the right.
+Following an old comment is asking what has become of the line since, and
+that view answers it: the comment sits on the left beside the text it was
+written about, with whatever replaced it alongside. A comment on the
+newest snapshot has nothing to compare against and links to it plainly,
+and one written on the parent side keeps its own link, being a remark
+about the commit underneath, which a diff between two snapshots does not
+show.
+
 # Command-Line Mode
 
 The command-line mode exists so that an agent can take part in a review.

@@ -617,9 +617,15 @@ func TestChangePageCommentHistory(t *testing.T) {
 	if !strings.Contains(body, "Commit Message:5") {
 		t.Errorf("commit message thread badly labelled:\n%s", body)
 	}
-	// Each thread links back to its own file at its own snapshot.
-	if !strings.Contains(body, "f=a.go&amp;s=1#thread-") {
-		t.Errorf("thread does not link back to its snapshot:\n%s", body)
+	// A comment written against an older snapshot links to that snapshot
+	// against the newest one, so following it shows what became of the
+	// line. A comment on the newest snapshot has nothing to compare with
+	// and links to it plainly.
+	if !strings.Contains(body, "base=1&amp;f=a.go&amp;s=2#thread-") {
+		t.Errorf("old comment does not link from its snapshot to the newest:\n%s", body)
+	}
+	if !strings.Contains(body, "f=%2FCOMMIT_MSG&amp;s=2#thread-") {
+		t.Errorf("comment on the newest snapshot did not link to it plainly:\n%s", body)
 	}
 	// Drafts and unresolved counts are summarized.
 	for _, want := range []string{"2 comments", "2 unresolved", "1 draft"} {
@@ -1813,5 +1819,55 @@ func TestCommentedFileListedWhenUnchanged(t *testing.T) {
 	}
 	if !strings.Contains(files, "about a file that is not there") {
 		t.Error("the comment on it is not in the history either")
+	}
+}
+
+// TestCommentLinkOpensAgainstLatest follows the link from a comment in the
+// change page's history and checks where it lands: the comment's own
+// snapshot on the left, the newest on the right, and the comment beside
+// the text it was written about rather than adrift.
+func TestCommentLinkOpensAgainstLatest(t *testing.T) {
+	r, _ := newStackedReview(t)
+	s := newServer(r.DB, r.Root(), r.Pin)
+
+	snaps, err := r.DB.Snapshots(r.Root(), topChangeKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A comment on shared.txt as it stood in snapshot 1, on the line the
+	// change itself went on to edit.
+	th, err := r.DB.AddThread(snaps[0].ID, "shared.txt", "new", 5, "TOP1", &Comment{
+		Author: "rsc", Body: "this name reads badly", Draft: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := mustGet(t, s, repoURL(t, r, "/c/"+topChangeKey))
+	want := "base=1&amp;f=shared.txt&amp;s=2#thread-" + strconv.FormatInt(th.ID, 10)
+	if !strings.Contains(body, want) {
+		t.Fatalf("history does not link %s:\n%s", want, body)
+	}
+
+	diff := mustGet(t, s, repoURL(t, r, "/d/"+topChangeKey+"?base=1&s=2&f=shared.txt"))
+	i := strings.Index(diff, "this name reads badly")
+	if i < 0 {
+		t.Fatalf("the comment is not on the page:\n%s", diff)
+	}
+	// It is anchored, not adrift: the snapshot it belongs to is on screen,
+	// so it is neither stale nor labelled as coming from somewhere else.
+	for _, chip := range []string{`class="chip stalechip"`, `class="chip snap"`} {
+		if strings.Contains(diff, chip) {
+			t.Errorf("comment carries %s though its own snapshot is shown", chip)
+		}
+	}
+	// And it sits in the left-hand thread cell, beside the text it is
+	// about, with what replaced that text alongside on the right.
+	row := strings.LastIndex(diff[:i], `<tr class="threadrow">`)
+	if row < 0 {
+		t.Fatal("the comment is not in a thread row")
+	}
+	if n := strings.Count(diff[row:i], `<td class="threadcell"`); n != 1 {
+		t.Errorf("comment is in thread cell %d of its row, want the first (left)", n)
 	}
 }
