@@ -7,8 +7,8 @@
       {{if .Drafts}}
       <form method="post" action="{{.RepoURL}}/publish">
         <input type="hidden" name="return" value="{{.RepoURL}}">
-        <button type="submit" class="primary" title="Publish every draft in this repository (a)">
-          Publish all {{.Drafts}} draft{{if ne .Drafts 1}}s{{end}}
+        <button type="submit" class="primary" title="Publish every draft in this repository">
+          Publish All ({{.Drafts}} draft{{if ne .Drafts 1}}s{{end}})
         </button>
       </form>
       {{end}}

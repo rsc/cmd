@@ -65,8 +65,10 @@ var keyHelp = []keySection{{
 		{Keys: []string{"x"}, Action: "toggleCheckbox", Text: "Toggle checkbox"},
 		{Keys: []string{"R"}, Action: "reload", Text: "Refresh list of changes"},
 		{Keys: []string{"G"}, Action: "grabSnapshot", Text: "Grab a snapshot of the selected change"},
-		{Keys: []string{"a"}, Action: "openPublish", Text: "Publish every draft in this repository"},
-		{Keys: []string{"P"}, Action: "openPublish", Text: "Publish every draft in this repository"},
+		// Publishing every draft in the repository is deliberately not
+		// bound to a key. It cannot be undone, it reaches past what is on
+		// screen, and a is one finger away from the keys that move around
+		// this page.
 		{Keys: []string{"u"}, Action: "goRepos", Text: "Up to every repository"},
 	},
 }, {

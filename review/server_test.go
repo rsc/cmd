@@ -1888,7 +1888,7 @@ func TestPublishAll(t *testing.T) {
 
 	// With no drafts anywhere, the button is not there.
 	page := mustGet(t, s, repoURL(t, r, ""))
-	if strings.Contains(page, "Publish all") {
+	if strings.Contains(page, "Publish All") {
 		t.Errorf("publish button offered with nothing to publish:\n%s", page)
 	}
 
@@ -1915,7 +1915,7 @@ func TestPublishAll(t *testing.T) {
 	}
 
 	page = mustGet(t, s, repoURL(t, r, ""))
-	if !strings.Contains(page, "Publish all 2 drafts") {
+	if !strings.Contains(page, "Publish All (2 drafts)") {
 		t.Errorf("publish button missing or miscounted:\n%s", page)
 	}
 
@@ -1943,7 +1943,7 @@ func TestPublishAll(t *testing.T) {
 
 	// And the button goes away again.
 	page = mustGet(t, s, repoURL(t, r, ""))
-	if strings.Contains(page, "Publish all") {
+	if strings.Contains(page, "Publish All") {
 		t.Error("publish button still offered after publishing everything")
 	}
 }
