@@ -1529,13 +1529,27 @@ func (s *server) snapshotReviewed(w http.ResponseWriter, req *http.Request, r *R
 	if err != nil {
 		return err
 	}
-	if _, err := r.DB.SnapshotByID(id); err != nil {
+	snap, err := r.DB.SnapshotByID(id)
+	if err != nil {
 		return err
 	}
 	on := req.FormValue("on") == "1"
 	if err := r.DB.SetSnapshotReviewed(id, on); err != nil {
 		return err
 	}
+	if err := r.MarkSnapshotFiles(snap, on); err != nil {
+		return err
+	}
+	if on {
+		// Marking an older snapshot reviewed can settle the newer ones too,
+		// if all that separates them is what a rebase carried in.
+		if err := r.SpreadReviewed(snap.Key); err != nil {
+			return err
+		}
+	}
+	// Every file button on the page has just changed, so redraw the page
+	// rather than the one button that was pressed.
+	w.Header().Set("HX-Refresh", "true")
 	return tmpl.ExecuteTemplate(w, "reviewedbutton", snapshotReviewedArg(r.Name, id, on))
 }
 
