@@ -638,19 +638,34 @@ func (s *server) files(w http.ResponseWriter, req *http.Request, r *Review) erro
 		if !t.Resolved {
 			p.Unresolved++
 		}
-		p.Threads = append(p.Threads, s.threadFrag(r, t, c.Key))
+		p.Threads = append(p.Threads, s.threadFrag(r, t, c.Key, v.LatestN()))
 	}
 	return tmpl.ExecuteTemplate(w, "files.html", p)
 }
 
 // threadFrag wraps a thread for display away from its diff, with a link
-// back to the file and snapshot it was written against.
-func (s *server) threadFrag(r *Review, t *Thread, key string) *threadFrag {
+// back to the file it is attached to. latest is the newest snapshot of
+// the change, or 0 if it is not known.
+//
+// When the comment was written against an older snapshot, the link opens
+// that snapshot against the newest one: following an old comment is
+// asking what has become of the line since, and this answers it. The
+// comment lands on the left, beside the text it was written about, with
+// whatever replaced it alongside.
+//
+// A comment on the parent side keeps its old link. It is a remark about
+// the commit underneath, which a diff between two snapshots does not
+// show, so pointing there would land it nowhere.
+func (s *server) threadFrag(r *Review, t *Thread, key string, latest int) *threadFrag {
+	base, target := "", strconv.Itoa(t.SnapshotN)
+	if latest > t.SnapshotN && t.Side == "new" {
+		base, target = target, strconv.Itoa(latest)
+	}
 	return &threadFrag{
 		Thread: t,
 		Repo:   r.Name,
 		User:   s.user,
-		Link: s.diffURL(r, key, t.File, "", strconv.Itoa(t.SnapshotN)) +
+		Link: s.diffURL(r, key, t.File, base, target) +
 			"#thread-" + strconv.FormatInt(t.ID, 10),
 	}
 }
@@ -1473,7 +1488,11 @@ func (s *server) renderThread(w http.ResponseWriter, r *Review, id int64) error 
 	}
 	f := &threadFrag{Thread: t, Repo: r.Name, User: s.user}
 	if snap, err := r.DB.SnapshotByID(t.SnapshotID); err == nil {
-		f = s.threadFrag(r, t, snap.Key)
+		latest := 0
+		if snaps, err := r.DB.Snapshots(r.Root(), snap.Key); err == nil && len(snaps) > 0 {
+			latest = snaps[len(snaps)-1].N
+		}
+		f = s.threadFrag(r, t, snap.Key, latest)
 	}
 	return tmpl.ExecuteTemplate(w, "thread", f)
 }
