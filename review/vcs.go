@@ -74,6 +74,18 @@ type File struct {
 	Path    string // path in the new revision
 	OldPath string // path in the old revision, if renamed or copied
 	Status  byte   // 'A' added, 'M' modified, 'D' deleted, 'R' renamed, 'C' copied
+
+	// A zero Status means the file is not in the diff at all, and is
+	// listed only because it carries comments. See addCommentedFiles.
+}
+
+// Char is the status letter for display. A file listed only for its
+// comments has none: the change did nothing to it.
+func (f *File) Char() string {
+	if f.Status == 0 {
+		return ""
+	}
+	return string(f.Status)
 }
 
 // Old reports the path this file had in the base revision.

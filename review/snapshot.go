@@ -7,6 +7,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"slices"
 	"strconv"
 )
 
@@ -241,7 +242,45 @@ func (r *Review) View(c *Change, base, target string) (*View, error) {
 	}
 	// The commit message is reviewed like any other file, and comes first.
 	v.Files = append([]*File{{Path: CommitMsgFile, Status: 'M'}}, files...)
+	if err := r.addCommentedFiles(v, c); err != nil {
+		return nil, err
+	}
 	return v, nil
+}
+
+// addCommentedFiles appends the files that carry comments but do not
+// appear in the diff. Comparing against the snapshot last marked reviewed
+// narrows the file list to what has moved since, which is the point of
+// doing it; but a comment written on a file that has not moved would then
+// have nowhere to be listed, and a comment nobody can reach is a comment
+// lost. Such a file has no status: the change did nothing to it.
+func (r *Review) addCommentedFiles(v *View, c *Change) error {
+	threads, err := r.DB.Threads(r.Root(), c.Key)
+	if err != nil || len(threads) == 0 {
+		return err
+	}
+	seen := map[string]bool{}
+	for _, f := range v.Files {
+		seen[f.Path] = true
+	}
+	var add []string
+	for _, t := range threads {
+		if !seen[t.File] {
+			seen[t.File] = true
+			add = append(add, t.File)
+		}
+	}
+	slices.Sort(add)
+	for _, path := range add {
+		// Only what is still there. A comment on a file deleted long ago
+		// has nothing left to be shown beside; it keeps its place in the
+		// change's comment history instead.
+		if _, err := r.Repo.Content(v.TargetRev, path); err != nil {
+			continue
+		}
+		v.Files = append(v.Files, &File{Path: path})
+	}
+	return nil
 }
 
 func findSnapshot(snaps []*Snapshot, s string) (*Snapshot, error) {
@@ -394,7 +433,9 @@ func (r *Review) RebaseOnly(v *View) (map[string]bool, error) {
 	}
 	out := map[string]bool{}
 	for _, f := range v.Files {
-		if f.Path == CommitMsgFile || own[f.Path] || (f.OldPath != "" && own[f.OldPath]) {
+		// A file with no status is not in the diff at all; it is listed for
+		// its comments. Nothing was brought along by a rebase there either.
+		if f.Path == CommitMsgFile || f.Status == 0 || own[f.Path] || (f.OldPath != "" && own[f.OldPath]) {
 			continue
 		}
 		out[f.Path] = true

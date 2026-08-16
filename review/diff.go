@@ -490,21 +490,31 @@ func byteSpans(r []rune, spans []Span) []Span {
 }
 
 // Collapse replaces runs of more than 2*ctx unchanged rows with a single
-// RowSkip row, leaving ctx rows of context on each side of every change.
-// A ctx of zero or less leaves the rows unchanged.
-func Collapse(rows []Row, ctx int) []Row {
+// RowSkip row, leaving ctx rows of context on each side of every change
+// and of every row that keep reports as worth showing anyway. A ctx of
+// zero or less leaves the rows unchanged, and a nil keep asks to show
+// nothing beyond the changes themselves.
+//
+// keep is how comments survive collapsing. A comment can sit on a line
+// that is nowhere near anything the change did — on a file it did not
+// touch at all, once one is listed for its comments — and a comment
+// folded away behind an expander is one nobody will answer.
+func Collapse(rows []Row, ctx int, keep func(Row) bool) []Row {
 	if ctx <= 0 {
 		return rows
 	}
+	shown := func(r Row) bool {
+		return r.Kind != RowEqual || (keep != nil && keep(r))
+	}
 	var out []Row
 	for i := 0; i < len(rows); {
-		if rows[i].Kind != RowEqual {
+		if shown(rows[i]) {
 			out = append(out, rows[i])
 			i++
 			continue
 		}
 		j := i
-		for j < len(rows) && rows[j].Kind == RowEqual {
+		for j < len(rows) && !shown(rows[j]) {
 			j++
 		}
 		// rows[i:j] is a run of unchanged rows. Keep ctx of them next to
