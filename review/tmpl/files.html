@@ -62,7 +62,7 @@
       {{range .Files}}
       <tr class="item filerow{{if .Hidden}} rebaseonly{{end}}" data-href="{{.URL}}" data-inline="{{.InlineURL}}"
           data-file="{{.Path}}" data-comments="{{.Comments}}" data-filter="{{.Path}}">
-        <td class="status status-{{printf "%c" .Status}}">{{printf "%c" .Status}}</td>
+        <td class="status status-{{.Char}}" title="{{if .Char}}{{else}}not changed by this commit; listed for its comments{{end}}">{{.Char}}</td>
         <td class="name"><a href="{{.URL}}">{{.Name}}</a></td>
         <td class="counts">
           {{if .Comments}}<span class="chip">{{.Comments}} comment{{if ne .Comments 1}}s{{end}}</span>{{end}}

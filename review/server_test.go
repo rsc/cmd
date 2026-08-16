@@ -1749,3 +1749,69 @@ func TestRebaseOnlyWithCommentsShown(t *testing.T) {
 		t.Error("the comment count is missing")
 	}
 }
+
+// TestCommentedFileListedWhenUnchanged checks that a file carrying comments
+// stays reachable even when the view it is shown in has no diff for it at
+// all. Comparing two snapshots narrows the list to what moved between them;
+// a comment on anything else must not fall out of the world with it.
+func TestCommentedFileListedWhenUnchanged(t *testing.T) {
+	r, _ := newStackedReview(t)
+	s := newServer(r.DB, r.Root(), r.Pin)
+	url := repoURL(t, r, "/c/"+topChangeKey+"?base=1&s=2")
+
+	// base.txt is in the repository but in neither change, so it is in no
+	// diff of this change at all.
+	before := mustGet(t, s, url)
+	if strings.Contains(before, `data-file="base.txt"`) {
+		t.Fatal("base.txt is in the change's diff after all")
+	}
+
+	snaps, err := r.DB.Snapshots(r.Root(), topChangeKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := snaps[len(snaps)-1]
+	if _, err := r.DB.AddThread(target.ID, "base.txt", "new", 1, "base", &Comment{
+		Author: "rsc", Body: "is this still wanted?", Draft: false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	files := mustGet(t, s, url)
+	if !strings.Contains(files, `data-file="base.txt"`) {
+		t.Error("a commented file is missing from the list")
+	}
+	// It has no status letter, because the change did nothing to it.
+	if !strings.Contains(files, `class="status status-"`) {
+		t.Error("the listed file was given a status it does not have")
+	}
+	// It is not rebase-only either: nothing was carried in by a rebase.
+	if strings.Contains(files, "rebase only") && !strings.Contains(files, "show 1 rebase-only file") {
+		t.Error("an unchanged file was labelled rebase-only")
+	}
+
+	// And it opens, showing the file and the comment on it rather than an
+	// error about the file not being part of the change.
+	diff := mustGet(t, s, repoURL(t, r, "/d/"+topChangeKey+"?base=1&s=2&f=base.txt"))
+	if !strings.Contains(diff, "is this still wanted?") {
+		t.Error("the comment is not on the page")
+	}
+	if !strings.Contains(diff, "base") {
+		t.Error("the file's text is not shown")
+	}
+
+	// A comment on something long since gone leaves no row to click: it
+	// keeps its place in the change's comment history instead.
+	if _, err := r.DB.AddThread(target.ID, "vanished.txt", "new", 1, "gone", &Comment{
+		Author: "rsc", Body: "about a file that is not there", Draft: false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	files = mustGet(t, s, url)
+	if strings.Contains(files, `data-file="vanished.txt"`) {
+		t.Error("listed a file that does not exist")
+	}
+	if !strings.Contains(files, "about a file that is not there") {
+		t.Error("the comment on it is not in the history either")
+	}
+}

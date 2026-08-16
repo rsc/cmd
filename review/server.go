@@ -860,19 +860,19 @@ func (s *server) diff(w http.ResponseWriter, req *http.Request, r *Review) error
 	oldLines, _ := splitLines(old)
 	newLines, _ := splitLines(new)
 
-	fd := Diff(old, new)
-	r.MarkInherited(v, f, fd.Rows)
-	rows := Collapse(fd.Rows, o.context)
-	if o.unified {
-		rows = Unified(rows)
-	}
-
 	threads, err := r.DB.Threads(r.Root(), c.Key)
 	if err != nil {
 		return err
 	}
 	left, right := v.PlaceThreads(threads, name, oldLines, newLines)
 	leftAt, rightAt := ThreadsByLine(left), ThreadsByLine(right)
+
+	fd := Diff(old, new)
+	r.MarkInherited(v, f, fd.Rows)
+	rows := Collapse(fd.Rows, o.context, hasThread(leftAt, rightAt))
+	if o.unified {
+		rows = Unified(rows)
+	}
 
 	p := &diffPage{
 		head:     s.head(r, path.Base(name)+" · "+c.Subject, "diff"),
@@ -946,6 +946,19 @@ func (s *server) diff(w http.ResponseWriter, req *http.Request, r *Review) error
 
 	p.File.Reviewed = reviewed[name]
 	return tmpl.ExecuteTemplate(w, "diff.html", p)
+}
+
+// hasThread reports which rows carry a comment, so that collapsing leaves
+// them showing. Line 0 is where stale threads are gathered and is not a
+// line of the file, so a blank side never counts.
+func hasThread(leftAt, rightAt map[int][]*Thread) func(Row) bool {
+	if len(leftAt) == 0 && len(rightAt) == 0 {
+		return nil
+	}
+	return func(r Row) bool {
+		return r.L.Num > 0 && len(leftAt[r.L.Num]) > 0 ||
+			r.R.Num > 0 && len(rightAt[r.R.Num]) > 0
+	}
 }
 
 // renderRows turns diff rows into rendered rows, attaching comment threads
@@ -1096,19 +1109,21 @@ func (s *server) inline(w http.ResponseWriter, req *http.Request, r *Review) err
 	oldLines, _ := splitLines(old)
 	newLines, _ := splitLines(new)
 
-	fd := Diff(old, new)
-	r.MarkInherited(v, f, fd.Rows)
-	rows := Collapse(fd.Rows, p.Context)
-	if p.Unified {
-		rows = Unified(rows)
-	}
 	threads, err := r.DB.Threads(r.Root(), c.Key)
 	if err != nil {
 		return err
 	}
 	left, right := v.PlaceThreads(threads, p.FileParam, oldLines, newLines)
+	leftAt, rightAt := ThreadsByLine(left), ThreadsByLine(right)
+
+	fd := Diff(old, new)
+	r.MarkInherited(v, f, fd.Rows)
+	rows := Collapse(fd.Rows, p.Context, hasThread(leftAt, rightAt))
+	if p.Unified {
+		rows = Unified(rows)
+	}
 	p.SelfURL = s.diffURL(r, c.Key, p.FileParam, p.BaseParam, p.TargetParam)
-	p.Rows = s.renderRows(r, rows, p, ThreadsByLine(left), ThreadsByLine(right))
+	p.Rows = s.renderRows(r, rows, p, leftAt, rightAt)
 
 	fmt.Fprintf(w, `<table class="diff inlinediff%s"><tbody>`, map[bool]string{true: " unified"}[p.Unified])
 	if err := tmpl.ExecuteTemplate(w, "rows", p); err != nil {
