@@ -489,6 +489,14 @@ type fileInfo struct {
 	InlineURL  string // the same diff as a fragment, for the file list
 }
 
+// Hidden reports whether the file list holds this file back. A file the
+// change does not touch has nothing in it to review — unless somebody has
+// already written a comment on it, which is a reason to look no matter
+// who put the lines there.
+func (f *fileInfo) Hidden() bool {
+	return f.RebaseOnly && f.Comments == 0
+}
+
 // Name returns the file's display name.
 func (f *fileInfo) Name() string {
 	if f.Path == CommitMsgFile {
@@ -600,7 +608,7 @@ func (s *server) files(w http.ResponseWriter, req *http.Request, r *Review) erro
 				info.Unresolved++
 			}
 		}
-		if info.RebaseOnly {
+		if info.Hidden() {
 			p.RebaseOnlyCount++
 		}
 		p.Files = append(p.Files, info)
