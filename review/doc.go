@@ -49,15 +49,19 @@ Sec-Fetch-Site or Origin header, as from the command line, still pass.
 # Reviewing
 
 The main page lists the changes waiting in every repository that has been
-reviewed, newest commit first, so that whatever was touched most recently
-is at the top whichever repository it came from. Each repository also has
-a page of its own at /name, where name is the last element of its path;
-repositories that share a last element are told apart as name, name.1 and
-so on, and a name once given is kept, so links do not move as other
-repositories come and go. Visiting a repository's full path redirects to
-its page, so a path pasted from a shell lands somewhere useful. Pressing u
-walks back up: from a change to its repository, and from a repository to
-the list of them all.
+reviewed, most recently snapshotted first, so that whatever was touched
+most recently is at the top whichever repository it came from. That is the
+time the lists show, too: a commit's own date is when the work was first
+written, which a rebase does not move, and which says nothing about when
+the change last reached the reviewer.
+
+Each repository also has a page of its own at /name, where name is the
+last element of its path; repositories that share a last element are told
+apart as name, name.1 and so on, and a name once given is kept, so links
+do not move as other repositories come and go. Visiting a repository's
+full path redirects to its page, so a path pasted from a shell lands
+somewhere useful. Pressing u walks back up: from a change to its
+repository, and from a repository to the list of them all.
 
 Which changes are pending depends on the version control system. In a jj
 repository they are the mutable commits, which includes the working-copy
