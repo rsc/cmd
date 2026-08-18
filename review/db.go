@@ -58,6 +58,13 @@ var migrations = map[int]string{
 const (
 	markReviewed = "reviewed"
 	markLGTM     = "lgtm"
+
+	// markOwnWork is not a verdict but a note to self: this snapshot holds
+	// something its predecessor did not, so the marks must not carry across
+	// it. Working that out means reading every file the change edits that
+	// the rebase touched as well, and neither snapshot can ever move, so
+	// the answer is written down rather than found again on every grab.
+	markOwnWork = "own-work"
 )
 
 const schema = `

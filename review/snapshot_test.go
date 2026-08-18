@@ -1080,3 +1080,110 @@ func TestSpreadMarksSettlesFileMarks(t *testing.T) {
 		t.Error("a file that changed was marked reviewed")
 	}
 }
+
+// TestSpreadMarksCarriesPastEditedFiles is the case the cheap test missed:
+// the rebase and the change touch the same files, but the change's own
+// edits to them are unchanged, so there is still nothing new to read.
+func TestSpreadMarksCarriesPastEditedFiles(t *testing.T) {
+	r, dir := newReview(t)
+	body := func(first, last string) string {
+		s := first + "\n"
+		for i := 2; i <= 9; i++ {
+			s += fmt.Sprintf("line %d\n", i)
+		}
+		return s + last + "\n"
+	}
+	write(t, dir, "shared.txt", body("top", "bottom"))
+	do(t, dir, "git", "add", ".")
+	do(t, dir, "git", "commit", "-q", "-m", "lower\n\nChange-Id: Ilower\n")
+
+	// The upper change edits the last line of the same file.
+	write(t, dir, "shared.txt", body("top", "bottom EDITED"))
+	do(t, dir, "git", "commit", "-q", "-a", "-m", "upper\n\nChange-Id: Iupper\n")
+
+	upper, err := r.Change("Iupper")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snaps, err := r.EnsureSnapshot(upper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.DB.SetSnapshotReviewed(snaps[0].ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.DB.SetSnapshotLGTM(snaps[0].ID, true); err != nil {
+		t.Fatal(err)
+	}
+	upperRev := upper.Rev
+
+	// Rewrite the lower change's first line and replay the upper one, so
+	// both of them have touched shared.txt.
+	do(t, dir, "git", "reset", "-q", "--hard", "HEAD~1")
+	write(t, dir, "shared.txt", body("top REWRITTEN", "bottom"))
+	do(t, dir, "git", "commit", "-q", "-a", "--amend", "--no-edit")
+	do(t, dir, "git", "cherry-pick", upperRev)
+
+	if upper, err = r.Change("Iupper"); err != nil {
+		t.Fatal(err)
+	}
+	if _, created, err := r.Grab(upper); err != nil || !created {
+		t.Fatalf("grab = %v, %v; want a new snapshot", created, err)
+	}
+	snaps, err = r.DB.Snapshots(r.Root(), "Iupper")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []string{markReviewed, markLGTM} {
+		if on, err := r.DB.SnapshotMark(snaps[1].ID, kind); err != nil {
+			t.Fatal(err)
+		} else if !on {
+			t.Errorf("%s did not carry across a rebase of a file the change edits", kind)
+		}
+	}
+}
+
+// TestSpreadMarksRecordsOwnWork checks that the expensive verdict is only
+// reached once: a snapshot found to hold work of its own is noted, and the
+// note is what later runs read.
+func TestSpreadMarksRecordsOwnWork(t *testing.T) {
+	r, dir := newReview(t)
+	write(t, dir, "a.go", "package p\n")
+	do(t, dir, "git", "add", ".")
+	do(t, dir, "git", "commit", "-q", "-m", "one\n\nChange-Id: Inote\n")
+
+	c, err := r.Change("Inote")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snaps, err := r.EnsureSnapshot(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.DB.SetSnapshotReviewed(snaps[0].ID, true); err != nil {
+		t.Fatal(err)
+	}
+
+	write(t, dir, "a.go", "package p\n\nvar X int\n")
+	do(t, dir, "git", "commit", "-q", "-a", "--amend", "--no-edit")
+	if c, err = r.Change("Inote"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := r.Grab(c); err != nil {
+		t.Fatal(err)
+	}
+	snaps, err = r.DB.Snapshots(r.Root(), "Inote")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if on, err := r.DB.SnapshotMark(snaps[1].ID, markOwnWork); err != nil {
+		t.Fatal(err)
+	} else if !on {
+		t.Error("the verdict was not recorded, so every grab would ask again")
+	}
+	if on, err := r.DB.SnapshotReviewed(snaps[1].ID); err != nil {
+		t.Fatal(err)
+	} else if on {
+		t.Error("a snapshot with work of its own was marked reviewed")
+	}
+}

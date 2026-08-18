@@ -249,8 +249,12 @@ work. So when everything separating two snapshots is a file the change
 does not touch, and the commit message differs only in the line naming the
 parent commit — the line a rebase always moves — the marks carry. What
 looked good is still there, so the sign-off travels with the reviewed
-mark. The same test the file list uses to call a file rebase-only decides
-it, so what the reader is told and what this concludes cannot drift apart.
+mark. A file the change edits counts as separating them only if its own
+edit to that file changed: the same test the file list uses to call a
+file rebase-only decides it, so what the reader is told and what this
+concludes cannot drift apart. Finding a snapshot that does hold work of
+its own is written down, since neither snapshot can move and the answer
+would otherwise be worked out again on every grab.
 Anything the change did itself stops the carry, and so does anything the
 repository will not answer for.
 
