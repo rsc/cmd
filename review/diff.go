@@ -206,11 +206,14 @@ type Row struct {
 	// them to help, or the line has no counterpart at all.
 	NoIntraline bool
 
-	// Rebased reports that this row's edit was inherited rather than made
-	// by the change being viewed: the same edit appears in the diff of the
-	// two sides' parent commits. Gerrit calls such a region "due to rebase"
-	// and paints it in muted colors. See MarkRebased.
-	Rebased bool
+	// RebasedL and RebasedR report that the line shown on that side was not
+	// put there by the change being viewed: it came up from the commit
+	// underneath, and differs between the two sides only because a rebase
+	// moved that commit. Gerrit calls such a region "due to rebase" and
+	// paints it in muted colors. The two sides are answered separately
+	// because they can differ: a line the change used to write itself can
+	// be replaced by one that now comes from below. See MarkRebased.
+	RebasedL, RebasedR bool
 
 	// For RowSkip: how many unchanged lines are hidden, and the
 	// 1-based line numbers they start at on each side.
@@ -333,108 +336,85 @@ func chunkRows(del, ins []string, a0, b0 int) []Row {
 	return rows
 }
 
-// MarkRebased marks the rows whose edit also appears in the diff of the two
-// sides' parent commits, oldParent and newParent. When a commit lower in a
-// stack is edited, rebasing carries its edits into every commit above it, so
-// they turn up in those commits' own snapshot-to-snapshot diffs even though
-// those commits did not make them. Those are exactly the edits that repeat
-// between the two diffs.
+// MarkRebased marks the rows of a diff that this change did not make.
+// old and new are the two sides being compared; oldParent and newParent are
+// the commits they sit on. When a commit lower in a stack is edited, rebasing
+// carries its edits into every commit above it, so they turn up in those
+// commits' own snapshot-to-snapshot diffs even though those commits did not
+// make them.
 //
-// Edits are matched by the text they remove and add rather than by position,
-// because the change's own edits shift the line numbers on one side and not
-// the other. An edit that draws inherited and new lines into a single chunk
-// matches nothing and stays unmarked, which errs toward showing a line as the
-// change's own work rather than muting one that is.
-func MarkRebased(rows []Row, oldParent, newParent []byte) {
+// A line is this change's own when the change put it there: when it is one of
+// the lines an edit from the commit underneath produces. Everything else in
+// the file came up from below, so a difference in it between the two sides is
+// a difference the rebase brought. Asking it of each side separately, against
+// that side's own parent, keeps the question about lines that really exist
+// rather than about matching one diff's text against another's: an edit of the
+// change's own sitting in the middle of a rebased passage used to spoil the
+// match for the whole passage, and neither the shape of the surrounding text
+// nor a line repeated elsewhere in the file can mislead it now.
+func MarkRebased(rows []Row, old, new, oldParent, newParent []byte) {
 	if len(rows) == 0 || bytes.Equal(oldParent, newParent) {
 		return
 	}
-	if isBinary(oldParent) || isBinary(newParent) {
-		return
-	}
-	inherited := make(map[string]int)
-	eachChunk(Diff(oldParent, newParent).Rows, func(c []Row) {
-		inherited[chunkKey(c)]++
-	})
-	if len(inherited) == 0 {
-		return
-	}
-	// Each inherited edit accounts for one edit here, so that a file with
-	// two identical edits, only one of which came from below, keeps the
-	// other one marked as this change's own.
-	eachChunk(rows, func(c []Row) {
-		k := chunkKey(c)
-		if inherited[k] == 0 {
+	for _, data := range [][]byte{old, new, oldParent, newParent} {
+		if isBinary(data) {
 			return
 		}
-		inherited[k]--
-		for i := range c {
-			c[i].Rebased = true
+	}
+	ownOld := ownLines(oldParent, old)
+	ownNew := ownLines(newParent, new)
+	for i := range rows {
+		r := &rows[i]
+		if r.Kind == RowEqual || r.Kind == RowSkip {
+			continue
 		}
-	})
+		r.RebasedL = r.L.Num > 0 && !ownOld[r.L.Num]
+		r.RebasedR = r.R.Num > 0 && !ownNew[r.R.Num]
+	}
 }
 
-// AnyRebased reports whether any row is inherited from a rebase.
+// ownLines returns the line numbers of file that an edit from parent
+// produces: the lines the change put there itself, as opposed to the ones
+// it inherited from the commit underneath.
+func ownLines(parent, file []byte) map[int]bool {
+	own := map[int]bool{}
+	for _, r := range Diff(parent, file).Rows {
+		if r.Kind == RowEqual || r.Kind == RowSkip {
+			continue
+		}
+		if r.R.Num > 0 {
+			own[r.R.Num] = true
+		}
+	}
+	return own
+}
+
+// AnyRebased reports whether any line shown is inherited from a rebase.
 func AnyRebased(rows []Row) bool {
 	for _, r := range rows {
-		if r.Rebased {
+		if r.RebasedL || r.RebasedR {
 			return true
 		}
 	}
 	return false
 }
 
-// AllRebased reports whether every changed row is inherited from a rebase,
-// so that the diff holds nothing the change did itself. A diff with no
-// changed rows at all reports false: nothing was inherited there either.
+// AllRebased reports whether every line the diff shows as changed is
+// inherited from a rebase, so that it holds nothing the change did itself.
+// A diff with no changed rows at all reports false: nothing was inherited
+// there either.
 func AllRebased(rows []Row) bool {
 	changed := false
 	for _, r := range rows {
 		if r.Kind == RowEqual || r.Kind == RowSkip {
 			continue
 		}
-		if !r.Rebased {
+		if r.L.Num > 0 && !r.RebasedL || r.R.Num > 0 && !r.RebasedR {
 			return false
 		}
 		changed = true
 	}
 	return changed
-}
-
-// eachChunk calls f on each maximal run of changed rows.
-func eachChunk(rows []Row, f func([]Row)) {
-	for i := 0; i < len(rows); {
-		if rows[i].Kind == RowEqual || rows[i].Kind == RowSkip {
-			i++
-			continue
-		}
-		j := i
-		for j < len(rows) && rows[j].Kind != RowEqual && rows[j].Kind != RowSkip {
-			j++
-		}
-		f(rows[i:j])
-		i = j
-	}
-}
-
-// chunkKey identifies an edit by the text it removes and the text it adds,
-// so that the same edit is recognized wherever in the file it lands.
-func chunkKey(rows []Row) string {
-	var b strings.Builder
-	for _, r := range rows {
-		if r.L.Num > 0 {
-			b.WriteString(r.L.Text)
-			b.WriteByte('\n')
-		}
-	}
-	b.WriteByte(0)
-	for _, r := range rows {
-		if r.R.Num > 0 {
-			b.WriteString(r.R.Text)
-			b.WriteByte('\n')
-		}
-	}
-	return b.String()
 }
 
 // intraline computes the changed byte ranges within a pair of lines.
@@ -583,12 +563,12 @@ func Unified(rows []Row) []Row {
 		}
 		for _, r := range rows[i:j] {
 			if r.Kind == RowReplace || r.Kind == RowDelete {
-				out = append(out, Row{Kind: RowDelete, L: r.L, Total: r.Total, NoIntraline: r.NoIntraline, Rebased: r.Rebased})
+				out = append(out, Row{Kind: RowDelete, L: r.L, Total: r.Total, NoIntraline: r.NoIntraline, RebasedL: r.RebasedL})
 			}
 		}
 		for _, r := range rows[i:j] {
 			if r.Kind == RowReplace || r.Kind == RowInsert {
-				out = append(out, Row{Kind: RowInsert, R: r.R, Total: r.Total, NoIntraline: r.NoIntraline, Rebased: r.Rebased})
+				out = append(out, Row{Kind: RowInsert, R: r.R, Total: r.Total, NoIntraline: r.NoIntraline, RebasedR: r.RebasedR})
 			}
 		}
 		i = j
