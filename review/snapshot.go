@@ -5,6 +5,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -488,11 +489,28 @@ func (r *Review) SpreadMarks(key string) error {
 		if len(carry) == 0 {
 			continue
 		}
+		// Asked and answered: neither snapshot can move, so a snapshot
+		// already known to hold work of its own still does.
+		own, err := r.DB.SnapshotMark(next.ID, markOwnWork)
+		if err != nil {
+			return err
+		}
+		if own {
+			continue
+		}
 		ok, err := r.onlyInherited(prev, next)
+		if errors.Is(err, errNoAnswer) {
+			// The repository would not say; ask again another time rather
+			// than writing down something that may not be true.
+			continue
+		}
 		if err != nil {
 			return err
 		}
 		if !ok {
+			if err := r.DB.SetSnapshotMark(next.ID, markOwnWork, true); err != nil {
+				return err
+			}
 			continue
 		}
 		for _, kind := range carry {
@@ -514,6 +532,10 @@ func (r *Review) SpreadMarks(key string) error {
 	return nil
 }
 
+// errNoAnswer reports that the repository would not say — a commit gone,
+// a listing that failed — so the verdict is not one to write down.
+var errNoAnswer = errors.New("cannot tell what changed")
+
 // onlyInherited reports whether everything that differs between two
 // snapshots was done by some other commit. A file counts as the change's
 // own if the change touches it in either snapshot, which is the same test
@@ -526,24 +548,37 @@ func (r *Review) SpreadMarks(key string) error {
 func (r *Review) onlyInherited(prev, next *Snapshot) (bool, error) {
 	changed, err := r.Repo.Files(prev.Rev, next.Rev)
 	if err != nil {
-		return false, nil
+		return false, errNoAnswer
 	}
-	own := map[string]bool{}
-	for _, s := range []*Snapshot{prev, next} {
-		files, err := r.Repo.Files(s.Parent, s.Rev)
+	if len(changed) > 0 {
+		own, err := r.pathSet(prev.Parent, prev.Rev, next.Parent, next.Rev)
 		if err != nil {
-			return false, nil
+			return false, errNoAnswer
 		}
-		for _, f := range files {
-			own[f.Path] = true
-			if f.OldPath != "" {
-				own[f.OldPath] = true
+		// What the rebase itself touched. A file the change edits that the
+		// rebase left alone cannot be showing anything but the change's own
+		// work, which settles the common case — an ordinary amend — without
+		// reading a single file.
+		moved, err := r.pathSet(prev.Parent, next.Parent)
+		if err != nil {
+			return false, errNoAnswer
+		}
+		// Reading the two snapshots as a diff lets a file the change edits
+		// be asked the same question the file list asks it: is every changed
+		// line in it something a commit below put there? A change that edits
+		// a file and a rebase that sweeps the same file are not the same
+		// thing, and only the second one leaves nothing to read.
+		v := &View{Base: prev, Target: next, BaseRev: prev.Rev, TargetRev: next.Rev}
+		for _, f := range changed {
+			if !own[f.Path] && (f.OldPath == "" || !own[f.OldPath]) {
+				continue // the change leaves this file alone
 			}
-		}
-	}
-	for _, f := range changed {
-		if own[f.Path] || (f.OldPath != "" && own[f.OldPath]) {
-			return false, nil
+			if !moved[f.Path] && (f.OldPath == "" || !moved[f.OldPath]) {
+				return false, nil
+			}
+			if !r.allInherited(v, f) {
+				return false, nil
+			}
 		}
 	}
 	// The commit message is not one of the repository's files, and a rebase
