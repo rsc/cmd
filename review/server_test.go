@@ -74,7 +74,7 @@ func mustGet(t *testing.T, s *server, path string) string {
 func TestServerChangeList(t *testing.T) {
 	s, r, _ := newTestServer(t)
 	body := mustGet(t, s, repoURL(t, r, ""))
-	for _, want := range []string{"add a.go", "Snapshot all", "review"} {
+	for _, want := range []string{"add a.go", "Snapshot All", "review"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("change list missing %q", want)
 		}

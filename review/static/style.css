@@ -144,6 +144,15 @@ button.primary {
 	border-color: var(--gerrit-blue-light);
 }
 button.primary:hover { background: #0d47a1; }
+/* A button whose form is posting: it says what it is doing, and says that
+ * it is still doing it. */
+button.busy, button.busy:hover {
+	opacity: 0.7;
+	cursor: progress;
+	background: var(--gray-100);
+	color: var(--gray-700);
+	border-color: var(--gray-300);
+}
 
 /* ---- chips ---- */
 
