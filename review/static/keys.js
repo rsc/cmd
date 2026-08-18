@@ -419,15 +419,13 @@
 			go(view.file ? a.href + "#" + encodeURIComponent(view.file) : a.href);
 		},
 
-		nextFile() {
-			const a = document.getElementById("nextfile");
-			if (a) go(a.href);
-		},
+		// Past either end is the file list, as in Gerrit, whose diff view
+		// answers a step off the end of its file list with {up: true}.
+		// Unlike n and p these offer nothing first: one press, one move,
+		// and the change page is where the files run out.
+		nextFile() { goFile("nextfile"); },
 
-		prevFile() {
-			const a = document.getElementById("prevfile");
-			if (a) go(a.href);
-		},
+		prevFile() { goFile("prevfile"); },
 
 		nextFileWithComments() { jumpCommentedFile(1); },
 		prevFileWithComments() { jumpCommentedFile(-1); },
@@ -687,6 +685,13 @@
 			});
 			cursor = -1;
 		});
+	}
+
+	// goFile follows one of the diff page's neighbour links, or goes up to
+	// the file list when there is no neighbour that way.
+	function goFile(id) {
+		const a = document.getElementById(id) || document.getElementById("filelistlink");
+		if (a) go(a.href);
 	}
 
 	// toggleRebaseFiles shows or hides the files the change does not touch,
