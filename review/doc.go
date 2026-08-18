@@ -441,6 +441,11 @@ is rather than nudged. Neither stops on a chunk a rebase brought along;
 those are stepped over like unchanged text, so that a file whose changes
 are all inherited has nowhere for the cursor to stop.
 
+Stepping off either end of the file list with ] or [ goes up to the
+change, as it does in Gerrit, whose diff view answers a step past the end
+with "up". Those two move once and say nothing; n and p are the pair that
+stop to offer something first.
+
 Pressing n on the last chunk of a file parks the cursor on its last line
 and shows a bar saying that pressing n again moves to the next file that
 is not yet marked reviewed; p does the same backwards. A file that did not
