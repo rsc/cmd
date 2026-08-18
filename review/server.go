@@ -145,49 +145,48 @@ type server struct {
 	mu   sync.Mutex
 	open map[string]*Review // by repository path
 
-	// rebase remembers which files a comparison holds nothing of the
-	// change's own work in. Working that out means reading every file the
-	// change edits that the rebase touched as well, which on a rebase
-	// across a whole tree is most of them; but a snapshot never moves, so
-	// the answer for a pair of revisions is settled once and for all.
-	rebaseMu sync.Mutex
-	rebase   map[string]map[string]bool
+	// stats remembers how much of each file a comparison changes, and
+	// which files it changes nothing of. Working that out means reading
+	// every file the diff touches; but a snapshot never moves, so the
+	// answer for a pair of revisions is settled once and for all.
+	statMu sync.Mutex
+	stats  map[string]map[string]FileStat
 }
 
-// rebaseCacheMax is how many comparisons to remember. Each is a handful of
-// file names, and a review moves through few enough of them that this is
-// never reached in one sitting; it is here so that a server left running
-// for weeks cannot grow without bound.
-const rebaseCacheMax = 64
+// statCacheMax is how many comparisons to remember. Each is a line per
+// file, and a review moves through few enough of them that this is never
+// reached in one sitting; it is here so that a server left running for
+// weeks cannot grow without bound.
+const statCacheMax = 64
 
-// rebaseOnly is RebaseOnly with its answer remembered. The working tree is
-// not cached, and does not reach here: it has no snapshot to compare from.
-func (s *server) rebaseOnly(r *Review, v *View) (map[string]bool, error) {
-	if v.Base == nil || v.Target == nil {
-		return nil, nil
+// fileStats is FileStats with its answer remembered. The working tree is
+// not cached: it is not a snapshot and can change under us.
+func (s *server) fileStats(r *Review, v *View) (map[string]FileStat, error) {
+	if v.Target == nil {
+		return r.FileStats(v)
 	}
 	key := r.Root() + "\x00" + v.BaseRev + "\x00" + v.TargetRev
 
-	s.rebaseMu.Lock()
-	got, ok := s.rebase[key]
-	s.rebaseMu.Unlock()
+	s.statMu.Lock()
+	got, ok := s.stats[key]
+	s.statMu.Unlock()
 	if ok {
 		return got, nil
 	}
 
-	out, err := r.RebaseOnly(v)
+	out, err := r.FileStats(v)
 	if err != nil {
 		return nil, err
 	}
-	s.rebaseMu.Lock()
-	defer s.rebaseMu.Unlock()
-	if len(s.rebase) >= rebaseCacheMax {
-		s.rebase = nil
+	s.statMu.Lock()
+	defer s.statMu.Unlock()
+	if len(s.stats) >= statCacheMax {
+		s.stats = nil
 	}
-	if s.rebase == nil {
-		s.rebase = make(map[string]map[string]bool)
+	if s.stats == nil {
+		s.stats = make(map[string]map[string]FileStat)
 	}
-	s.rebase[key] = out
+	s.stats[key] = out
 	return out, nil
 }
 
@@ -531,6 +530,8 @@ func (s *server) changeInfo(r *Review, c *Change) (*changeInfo, error) {
 // fileInfo summarizes one file for the file list and diff header.
 type fileInfo struct {
 	*File
+	Added      int // lines the diff adds, not counting a rebase's
+	Deleted    int // lines it deletes, likewise
 	Resolved   int // comment threads settled
 	Unresolved int // comment threads still open
 	Reviewed   bool
@@ -631,7 +632,7 @@ func (s *server) files(w http.ResponseWriter, req *http.Request, r *Review) erro
 		}
 	}
 
-	rebaseOnly, err := s.rebaseOnly(r, v)
+	stats, err := s.fileStats(r, v)
 	if err != nil {
 		return err
 	}
@@ -647,10 +648,13 @@ func (s *server) files(w http.ResponseWriter, req *http.Request, r *Review) erro
 		},
 	}
 	for _, f := range v.Files {
+		st := stats[f.Path]
 		info := &fileInfo{
 			File:       f,
 			Reviewed:   reviewed[f.Path],
-			RebaseOnly: rebaseOnly[f.Path],
+			RebaseOnly: st.RebaseOnly,
+			Added:      st.Added,
+			Deleted:    st.Deleted,
 			URL:        s.diffURL(r, c.Key, f.Path, base, target),
 			InlineURL:  s.inlineURL(r, c.Key, f.Path, base, target),
 		}
@@ -991,7 +995,7 @@ func (s *server) diff(w http.ResponseWriter, req *http.Request, r *Review) error
 	}
 	// M steps over the files that hold nothing of the change's own work, so
 	// the list it walks has to know which those are.
-	rebaseOnly, err := s.rebaseOnly(r, v)
+	stats, err := s.fileStats(r, v)
 	if err != nil {
 		return err
 	}
@@ -1008,7 +1012,7 @@ func (s *server) diff(w http.ResponseWriter, req *http.Request, r *Review) error
 			URL:        s.diffURL(r, c.Key, ff.Path, base, target),
 			Threads:    n,
 			Reviewed:   reviewed[ff.Path],
-			RebaseOnly: rebaseOnly[ff.Path],
+			RebaseOnly: stats[ff.Path].RebaseOnly,
 		})
 		if ff.Path != name {
 			continue

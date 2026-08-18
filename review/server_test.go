@@ -2113,3 +2113,44 @@ func TestChangeListShowsOneChip(t *testing.T) {
 		t.Error("both chips shown; want the LGTM one alone")
 	}
 }
+
+// TestFileListDelta checks the +N -M column: it counts the lines the diff
+// the row opens adds and deletes, leaving out the ones a rebase brought,
+// which are not this change's work.
+func TestFileListDelta(t *testing.T) {
+	r, _ := newStackedReview(t)
+	s := newServer(r.DB, r.Root(), r.Pin)
+
+	// Against the parent, the counts are the change's whole diff.
+	whole := fileDelta(t, mustGet(t, s, repoURL(t, r, "/c/"+topChangeKey+"?base=parent&s=2")))
+	if got := whole["shared.txt"]; got != "+1 −1" {
+		t.Errorf("shared.txt against the parent = %q, want %q", got, "+1 −1")
+	}
+
+	// Between the snapshots, shared.txt shows one edit of the change's own
+	// and one the rebase brought; only the first is counted. deep.txt is
+	// nothing but rebase, so it counts nothing at all.
+	between := fileDelta(t, mustGet(t, s, repoURL(t, r, "/c/"+topChangeKey+"?base=1&s=2")))
+	if got := between["shared.txt"]; got != "+1 −1" {
+		t.Errorf("shared.txt between snapshots = %q, want %q", got, "+1 −1")
+	}
+	if got := between["deep.txt"]; got != "+0 −0" {
+		t.Errorf("deep.txt = %q, want %q: every line in it came from below", got, "+0 −0")
+	}
+	// A minus sign, not a hyphen.
+	if strings.Contains(between["deep.txt"], "-") {
+		t.Error("the deleted count uses a hyphen, want a minus sign")
+	}
+}
+
+// fileDelta returns each file row's +N -M text, by path.
+func fileDelta(t *testing.T, body string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	rows := regexp.MustCompile(`data-file="([^"]*)"(?s:.*?)<td class="delta">(?s:(.*?))</td>`)
+	for _, m := range rows.FindAllStringSubmatch(body, -1) {
+		text := regexp.MustCompile(`<[^>]*>`).ReplaceAllString(m[2], "")
+		out[m[1]] = strings.Join(strings.Fields(text), " ")
+	}
+	return out
+}
