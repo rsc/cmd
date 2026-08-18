@@ -373,6 +373,11 @@ func (s *server) headAll(title string) head {
 // changeInfo summarizes one change for the change list.
 type changeInfo struct {
 	*Change
+	// Updated is when the newest snapshot was taken, which is when the
+	// change last reached the reviewer. The commit's own date says when
+	// the work was first written, which a rebase does not move and which
+	// answers a question nobody looking at a review list is asking.
+	Updated    time.Time
 	Snapshots  int
 	Resolved   int // comment threads settled
 	Unresolved int // comment threads still open
@@ -466,8 +471,15 @@ func (s *server) all(w http.ResponseWriter, req *http.Request) error {
 			p.Rows = append(p.Rows, &allRow{changeInfo: ci, Repo: info, URL: s.filesURL(r, c.Key, "", "")})
 		}
 	}
-	// Newest commit first, across every repository.
+	// Most recently snapshotted first, across every repository, which is
+	// the order the times in the rows are in. Snapshot times are recorded
+	// to the second, and one "review snapshot" records a whole repository
+	// inside one, so the commit's own date breaks the ties rather than
+	// leaving a run of changes in whatever order they were gathered.
 	sort.SliceStable(p.Rows, func(i, j int) bool {
+		if !p.Rows[i].Updated.Equal(p.Rows[j].Updated) {
+			return p.Rows[i].Updated.After(p.Rows[j].Updated)
+		}
 		return p.Rows[i].Date.After(p.Rows[j].Date)
 	})
 	return tmpl.ExecuteTemplate(w, "all.html", p)
@@ -498,7 +510,11 @@ func (s *server) changeInfo(r *Review, c *Change) (*changeInfo, error) {
 		return nil, err
 	}
 	info.Snapshots = len(snaps)
+	// The uncommitted working tree has no snapshot, so it keeps the only
+	// time it has.
+	info.Updated = c.Date
 	if n := len(snaps); n > 0 {
+		info.Updated = snaps[n-1].Created
 		// Only the newest snapshot counts: reviewing an older one says
 		// nothing about the state the change is in now.
 		if info.Reviewed, err = r.DB.SnapshotReviewed(snaps[n-1].ID); err != nil {
