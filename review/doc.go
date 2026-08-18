@@ -437,9 +437,10 @@ top of the window, so that what follows it is on screen: a chunk read with
 its consequences off the bottom edge is half a chunk. Near the end of a
 file they stop once the bottom of it is in view, since there is nothing
 past that to scroll to, and a chunk already near the top is left where it
-is rather than nudged. Neither stops on a chunk a rebase brought along;
-those are stepped over like unchanged text, so that a file whose changes
-are all inherited has nowhere for the cursor to stop.
+is rather than nudged. Neither stops on a line a rebase brought along:
+those are stepped over exactly as unchanged text is, so a file whose
+changes are all inherited has nowhere for the cursor to stop, and a line
+of the change's own in the middle of a rebased passage is still a stop.
 
 Stepping off either end of the file list with ] or [ goes up to the
 change, as it does in Gerrit, whose diff view answers a step past the end
