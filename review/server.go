@@ -1227,7 +1227,18 @@ func (s *server) inline(w http.ResponseWriter, req *http.Request, r *Review) err
 	p.SelfURL = s.diffURL(r, c.Key, p.FileParam, p.BaseParam, p.TargetParam)
 	p.Rows = s.renderRows(r, rows, p, leftAt, rightAt)
 
-	fmt.Fprintf(w, `<table class="diff inlinediff%s"><tbody>`, map[bool]string{true: " unified"}[p.Unified])
+	// The same frame the diff page puts around these rows. The columns are
+	// not decoration: table-layout is fixed, so without a colgroup the
+	// browser takes its widths from the first row, which for a collapsed
+	// diff is one cell spanning the lot.
+	cols := `<col class="numcol"><col class="codecol"><col class="numcol"><col class="codecol">`
+	unified := ""
+	if p.Unified {
+		cols = `<col class="numcol"><col class="codecol">`
+		unified = " unified"
+	}
+	fmt.Fprintf(w, `<table class="diff inlinediff%s" style="tab-size:%d"><colgroup>%s</colgroup><tbody>`,
+		unified, p.TabSize, cols)
 	if err := tmpl.ExecuteTemplate(w, "rows", p); err != nil {
 		return err
 	}
