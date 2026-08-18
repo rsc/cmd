@@ -185,6 +185,18 @@ tr.item:hover > td { background: var(--gray-50); }
 .changelist .subject a, .filelist .name a { color: var(--gray-900); font-weight: 500; }
 .changelist .author, .changelist .when { color: var(--gray-700); }
 .filelist .counts, .changelist .counts { color: var(--gray-700); white-space: nowrap; }
+/* Lines added and deleted by the diff the row opens, in the diff's own
+ * colors. A rebase's lines are not this change's work and are not counted,
+ * so a file it never touched reads +0 -0. */
+.filelist .delta {
+	white-space: nowrap;
+	font-family: var(--mono);
+	font-size: 11px;
+	text-align: right;
+	width: 10ch;
+}
+.filelist .delta .plus { color: var(--green-700); }
+.filelist .delta .minus { color: var(--red-700); }
 .filelist .counts .chip + .chip,
 .changelist .counts .chip + .chip { margin-left: 6px; }
 .changelist .pick { width: 24px; }

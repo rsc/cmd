@@ -455,9 +455,13 @@ func TestRebaseInheritedEdits(t *testing.T) {
 
 	// deep.txt is nowhere in the upper change's own work, so everything
 	// its diff shows was done below it.
-	only, err := r.RebaseOnly(v)
+	stats, err := r.FileStats(v)
 	if err != nil {
 		t.Fatal(err)
+	}
+	only := map[string]bool{}
+	for path, st := range stats {
+		only[path] = st.RebaseOnly
 	}
 	if !only["deep.txt"] {
 		t.Errorf("deep.txt not reported as rebase-only; got %v", only)
@@ -488,10 +492,10 @@ func TestRebaseInheritedEdits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if only, err := r.RebaseOnly(pv); err != nil {
+	if pstats, err := r.FileStats(pv); err != nil {
 		t.Fatal(err)
-	} else if len(only) != 0 {
-		t.Errorf("parent view reports rebase-only files %v", only)
+	} else if pstats["shared.txt"].RebaseOnly || pstats["deep.txt"].RebaseOnly {
+		t.Errorf("parent view reports rebase-only files: %v", pstats)
 	}
 	pf := pv.File("shared.txt")
 	old, new, err = r.Contents(pv, pf)
@@ -822,9 +826,13 @@ func TestRebaseOnlyFileTheChangeEdits(t *testing.T) {
 	if v.File("shared.txt") == nil {
 		t.Fatal("shared.txt is not in the snapshot-to-snapshot diff")
 	}
-	only, err := r.RebaseOnly(v)
+	stats, err := r.FileStats(v)
 	if err != nil {
 		t.Fatal(err)
+	}
+	only := map[string]bool{}
+	for path, st := range stats {
+		only[path] = st.RebaseOnly
 	}
 	if !only["shared.txt"] {
 		t.Error("a file whose only difference came from below was not called rebase-only")
@@ -836,9 +844,9 @@ func TestRebaseOnlyFileTheChangeEdits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if only, err := r.RebaseOnly(pv); err != nil {
+	if stats, err := r.FileStats(pv); err != nil {
 		t.Fatal(err)
-	} else if only["shared.txt"] {
+	} else if stats["shared.txt"].RebaseOnly {
 		t.Error("the whole-change view called an edited file rebase-only")
 	}
 }

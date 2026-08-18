@@ -75,6 +75,13 @@ which is how a reworded message shows up. Clicking a file shows a
 side-by-side diff where clicking a line number leaves a comment on that
 line.
 
+Each file in the list carries the size of the diff the row opens, as +N
+−M. The counts leave out the lines a rebase brought, for the same reason
+the diff mutes them: they are not this change's work, and counting them
+would put a four-figure number beside a file the change never touched.
+A file wholly inherited that way reads +0 −0, which is the whole of what
+there is to say about it.
+
 An unpublished comment can be edited or deleted from the buttons in its
 header. Published comments cannot: once a reply may have been written
 against a comment, changing it would rewrite the conversation. Deleting

@@ -635,46 +635,75 @@ func (r *Review) inherited(v *View, f *File) (old, new []byte, ok bool) {
 	return old, new, true
 }
 
-// RebaseOnly reports which of a view's files show nothing the change did
-// itself, so that everything in their diffs was done by a commit below
-// this one. Those are the files not to open.
+// A FileStat is what the file list says about one file beyond its name:
+// how many lines the diff it opens adds and deletes, and whether that
+// leaves nothing at all.
 //
-// Most of them are settled by two file listings: a file the change touches
-// in neither snapshot can only be showing what a rebase brought. But a
-// file the change does edit can be wholly inherited too, when its own edit
-// to the file is the same on both sides and only the ground underneath it
-// moved — which is the common case when a rebase sweeps a whole tree. That
-// one has to be answered by reading the file, so it is asked only of the
-// files where it can be true: the ones the change edits and the rebase
-// touched as well.
-func (r *Review) RebaseOnly(v *View) (map[string]bool, error) {
-	if v.Base == nil || v.Target == nil || v.Base.Parent == v.Target.Parent {
-		return nil, nil
-	}
-	own, err := r.pathSet(v.Base.Parent, v.Base.Rev, v.Target.Parent, v.Target.Rev)
-	if err != nil {
-		return nil, err
-	}
-	moved, err := r.pathSet(v.Base.Parent, v.Target.Parent)
-	if err != nil {
-		return nil, err
+// Lines a rebase brought are left out of the counts. They are not this
+// change's work, and counting them would put a four-figure number beside
+// a file the change never touched.
+type FileStat struct {
+	Added      int
+	Deleted    int
+	RebaseOnly bool
+}
+
+// FileStats measures every file in a view.
+//
+// A file the change touches in neither snapshot needs no measuring: every
+// line in it came from below, so the counts are zero and the file is
+// rebase-only. The rest are diffed, and the ones the rebase touched as
+// well have their inherited lines marked first so they can be left out.
+func (r *Review) FileStats(v *View) (map[string]FileStat, error) {
+	var own, moved map[string]bool
+	rebased := v.Base != nil && v.Target != nil && v.Base.Parent != v.Target.Parent
+	if rebased {
+		var err error
+		if own, err = r.pathSet(v.Base.Parent, v.Base.Rev, v.Target.Parent, v.Target.Rev); err != nil {
+			return nil, err
+		}
+		if moved, err = r.pathSet(v.Base.Parent, v.Target.Parent); err != nil {
+			return nil, err
+		}
 	}
 
-	out := map[string]bool{}
+	out := make(map[string]FileStat, len(v.Files))
 	for _, f := range v.Files {
 		// A file with no status is not in the diff at all; it is listed for
-		// its comments. Nothing was brought along by a rebase there either.
-		if f.Path == CommitMsgFile || f.Status == 0 {
+		// its comments, and has nothing to count.
+		if f.Status == 0 {
 			continue
 		}
-		switch {
-		case !own[f.Path] && (f.OldPath == "" || !own[f.OldPath]):
-			out[f.Path] = true
-		case moved[f.Path] || (f.OldPath != "" && moved[f.OldPath]):
-			if r.allInherited(v, f) {
-				out[f.Path] = true
+		// The commit message belongs to this change alone; no rebase can
+		// have brought it. It is measured like any other file below, where
+		// nothing marks it inherited, so it never comes out rebase-only.
+		touches := !rebased || f.Path == CommitMsgFile ||
+			own[f.Path] || (f.OldPath != "" && own[f.OldPath])
+		if !touches {
+			out[f.Path] = FileStat{RebaseOnly: true}
+			continue
+		}
+		old, new, err := r.Contents(v, f)
+		if err != nil {
+			continue
+		}
+		rows := Diff(old, new).Rows
+		if rebased && (moved[f.Path] || (f.OldPath != "" && moved[f.OldPath])) {
+			r.MarkInherited(v, f, old, new, rows)
+		}
+		st := FileStat{RebaseOnly: AllRebased(rows)}
+		for _, row := range rows {
+			if row.Kind == RowEqual || row.Kind == RowSkip {
+				continue
+			}
+			if row.L.Num > 0 && !row.RebasedL {
+				st.Deleted++
+			}
+			if row.R.Num > 0 && !row.RebasedR {
+				st.Added++
 			}
 		}
+		out[f.Path] = st
 	}
 	return out, nil
 }
