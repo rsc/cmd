@@ -67,6 +67,9 @@
           data-file="{{.Path}}" data-comments="{{.Threads}}" data-filter="{{.Path}}">
         <td class="status status-{{.Char}}" title="{{if .Char}}{{else}}not changed by this commit; listed for its comments{{end}}">{{.Char}}</td>
         <td class="name"><a href="{{.URL}}">{{.Name}}</a></td>
+        <td class="delta">
+          {{if .Char}}<span class="plus">+{{.Added}}</span> <span class="minus">−{{.Deleted}}</span>{{end}}
+        </td>
         <td class="counts">
           {{if .Resolved}}<span class="chip done">{{.Resolved}} resolved</span>{{end}}
           {{if .Unresolved}}<span class="chip unresolved">{{.Unresolved}} unresolved</span>{{end}}
