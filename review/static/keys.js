@@ -469,24 +469,29 @@
 	// jumpChunk moves the cursor to the next or previous changed chunk and
 	// reports whether it found one. With no chunk left it clips the cursor
 	// to the last or first line, the way Gerrit's cursor does.
+	// mine reports whether a row shows something this change did itself.
+	// A row a rebase brought along has nothing in it to review, so it
+	// counts as unchanged text here: stepping over it is the point, and
+	// counting it as a gap is what lets a line of the change's own sitting
+	// in the middle of a rebased passage still be somewhere n can stop.
+	function mine(row) {
+		return row !== undefined &&
+			!row.classList.contains("equal") &&
+			!row.classList.contains("rebased");
+	}
+
 	function jumpChunk(d) {
 		const all = rows();
 		if (all.length === 0) return false;
 		let i = cursor < 0 ? (d > 0 ? -1 : all.length) : cursor;
-		// Step past the current chunk, then to the start of the next one.
-		let seenGap = all[i] === undefined || all[i].classList.contains("equal");
+		// Step past the run the cursor is in, then to the start of the next.
+		let seenGap = !mine(all[i]);
 		for (i += d; i >= 0 && i < all.length; i += d) {
-			const changed = !all[i].classList.contains("equal");
-			if (!changed) { seenGap = true; continue; }
+			if (!mine(all[i])) { seenGap = true; continue; }
 			if (!seenGap) continue;
-			// A chunk a rebase brought along is not this change's work and
-			// has nothing in it to review, so step over it as if it were
-			// unchanged text. Clearing seenGap walks off the rest of the
-			// chunk the same way the current one is walked off above.
-			if (all[i].classList.contains("rebased")) { seenGap = false; continue; }
-			// For backward motion, land on the first row of the chunk.
+			// For backward motion, land on the first row of the run.
 			if (d < 0) {
-				while (i - 1 >= 0 && !all[i - 1].classList.contains("equal")) i--;
+				while (i - 1 >= 0 && mine(all[i - 1])) i--;
 			}
 			scrollChunk(setCursor(i, false));
 			return true;
