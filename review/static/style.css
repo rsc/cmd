@@ -167,9 +167,16 @@ button.busy, button.busy:hover {
 	color: var(--gray-800);
 	white-space: nowrap;
 }
-.chip.unresolved { background: var(--red-50); color: var(--red-700); }
+/* Unresolved is asking for something; a draft is asking for something and
+ * has not been sent yet, so it leans as well as stands out. */
+.chip.unresolved { background: var(--red-50); color: var(--red-700); font-weight: bold; }
 .chip.done { background: var(--green-50); color: var(--green-700); }
-.chip.draftchip { background: var(--orange-50); color: var(--orange-900); }
+.chip.draftchip {
+	background: var(--orange-50);
+	color: var(--orange-900);
+	font-weight: bold;
+	font-style: italic;
+}
 .chip.agentchip { background: var(--blue-50); color: var(--blue-700); }
 .chip.working, .chip.current { background: var(--purple-50); color: var(--purple-900); }
 .chip.stalechip { background: var(--orange-50); color: var(--orange-900); }
