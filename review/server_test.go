@@ -115,13 +115,24 @@ func TestServerAllRepos(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Snapshot the first one too, so that both rows are dated by a
+	// snapshot rather than one of them by its commit.
+	aChanges, err := r.Repo.Changes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.EnsureSnapshot(aChanges[0]); err != nil {
+		t.Fatal(err)
+	}
+
 	body := mustGet(t, s, "/")
 	if !strings.Contains(body, "add a.go") || !strings.Contains(body, "add b.go") {
 		t.Fatalf("home page does not list both repositories:\n%s", body)
 	}
-	// Newest commit first.
+	// Most recently snapshotted first. Both were snapshotted in the same
+	// second, so this is the tie-break at work: the newer commit wins.
 	if i, j := strings.Index(body, "add b.go"), strings.Index(body, "add a.go"); i > j {
-		t.Error("changes are not sorted with the newest commit first")
+		t.Error("changes are not sorted with the most recent first")
 	}
 	// Each row names its repository and links into it.
 	nameA, _ := r.DB.RepoName(r.Root())
@@ -2153,4 +2164,39 @@ func fileDelta(t *testing.T, body string) map[string]string {
 		out[m[1]] = strings.Join(strings.Fields(text), " ")
 	}
 	return out
+}
+
+// TestChangeListShowsSnapshotTime checks that a change is dated by when it
+// last reached the reviewer, not by when the work was first written. A
+// rebase does not move the commit's own date, so an old date beside a
+// change snapshotted a minute ago says nothing useful.
+func TestChangeListShowsSnapshotTime(t *testing.T) {
+	r, dir := newReview(t)
+	s := newServer(r.DB, r.Root(), r.Pin)
+
+	// A commit written long ago.
+	write(t, dir, "a.go", "package p\n")
+	do(t, dir, "git", "add", ".")
+	do(t, dir, "git", "commit", "-q", "--date=2020-01-02T03:04:05", "-m", "old work\n\nChange-Id: Iold\n")
+
+	c, err := r.Change("Iold")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.EnsureSnapshot(c); err != nil {
+		t.Fatal(err)
+	}
+
+	body := mustGet(t, s, repoURL(t, r, ""))
+	when := regexp.MustCompile(`<td class="when"[^>]*>([^<]*)</td>`).FindStringSubmatch(body)
+	if when == nil {
+		t.Fatalf("no time in the change row:\n%s", body)
+	}
+	got := strings.TrimSpace(when[1])
+	if got != "just now" {
+		t.Errorf("change row says %q; want the snapshot's time, not the commit's", got)
+	}
+	if strings.Contains(body, "Jan 2, 2020") {
+		t.Error("the commit's own date is still shown")
+	}
 }

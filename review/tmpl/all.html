@@ -29,7 +29,7 @@
           {{if .Unresolved}}<span class="chip unresolved">{{.Unresolved}} unresolved</span>{{end}}
           {{if .Drafts}}<span class="chip draftchip">{{.Drafts}} draft</span>{{end}}
         </td>
-        <td class="when">{{since .Date}}</td>
+        <td class="when" title="when the newest snapshot was taken">{{since .Updated}}</td>
       </tr>
       {{end}}
     </tbody>
