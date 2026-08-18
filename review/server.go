@@ -797,9 +797,12 @@ type renderRow struct {
 }
 
 // RowClass is what the row's <tr> carries: its kind, plus a mark on a row
-// a rebase brought along, so that the keyboard can step over it.
+// showing nothing but what a rebase brought, so that the keyboard can step
+// over it. A row with a line of the change's own on either side is not one
+// of those, however much of the rest of it came from below.
 func (r *renderRow) RowClass() string {
-	if r.Rebased {
+	own := r.L.Num > 0 && !r.RebasedL || r.R.Num > 0 && !r.RebasedR
+	if r.Kind != RowEqual && r.Kind != RowSkip && !own {
 		return r.Class() + " rebased"
 	}
 	return r.Class()
@@ -824,14 +827,14 @@ func (r *renderRow) Class() string {
 // and "add" for the pale line background, plus "total" when the chunk only
 // adds or only removes and the strong color covers the whole line.
 func (r *renderRow) LeftClass() string {
-	return sideClass(r, "remove", r.Kind == RowReplace || r.Kind == RowDelete)
+	return sideClass(r, "remove", r.Kind == RowReplace || r.Kind == RowDelete, r.RebasedL)
 }
 
 func (r *renderRow) RightClass() string {
-	return sideClass(r, "add", r.Kind == RowReplace || r.Kind == RowInsert)
+	return sideClass(r, "add", r.Kind == RowReplace || r.Kind == RowInsert, r.RebasedR)
 }
 
-func sideClass(r *renderRow, name string, changed bool) string {
+func sideClass(r *renderRow, name string, changed, rebased bool) string {
 	if !changed {
 		return ""
 	}
@@ -842,7 +845,7 @@ func sideClass(r *renderRow, name string, changed bool) string {
 	if r.NoIntraline {
 		c += " nointra"
 	}
-	if r.Rebased {
+	if rebased {
 		c += " rebased"
 	}
 	return c
@@ -943,7 +946,7 @@ func (s *server) diff(w http.ResponseWriter, req *http.Request, r *Review) error
 	leftAt, rightAt := ThreadsByLine(left), ThreadsByLine(right)
 
 	fd := Diff(old, new)
-	r.MarkInherited(v, f, fd.Rows)
+	r.MarkInherited(v, f, old, new, fd.Rows)
 	rows := Collapse(fd.Rows, o.context, hasThread(leftAt, rightAt))
 	if o.unified {
 		rows = Unified(rows)
@@ -1196,7 +1199,7 @@ func (s *server) inline(w http.ResponseWriter, req *http.Request, r *Review) err
 	leftAt, rightAt := ThreadsByLine(left), ThreadsByLine(right)
 
 	fd := Diff(old, new)
-	r.MarkInherited(v, f, fd.Rows)
+	r.MarkInherited(v, f, old, new, fd.Rows)
 	rows := Collapse(fd.Rows, p.Context, hasThread(leftAt, rightAt))
 	if p.Unified {
 		rows = Unified(rows)
