@@ -133,13 +133,19 @@ colors; review does the same, using Gerrit's palette for that too:
 lavender where a change of its own would be green, tan where it would be
 red. A note above the diff says what the muted colors mean.
 
-An edit is inherited if the same edit appears in the diff of the two
-snapshots' parent commits. Edits are matched by the text they remove and
-add rather than by position, since the change's own edits shift the line
-numbers on one side and not the other. An edit that draws inherited and
-new lines into a single chunk matches nothing and stays unmarked, which
-errs toward showing a line as the change's own work rather than muting
-one that is.
+A line is the change's own work when the change put it there: when it is
+one of the lines an edit from the commit underneath produces. Everything
+else in the file came up from below, so a difference in it between the two
+snapshots is a difference the rebase brought. Each side is asked about its
+own parent, so the question is always about lines that really exist rather
+than about matching one diff's text against another's — which means that
+neither an edit of the change's own sitting in the middle of a rebased
+passage nor a line repeated elsewhere in the file can mislead it.
+
+The two sides are answered separately, because they can differ. A line the
+change used to write itself can be replaced by one that now comes from
+below, and then the red half of that row is the change's own work and the
+green half is not.
 
 A file is called rebase-only when every changed line in it is inherited.
 Most are settled by two file listings: a file the change touches in

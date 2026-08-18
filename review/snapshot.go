@@ -606,9 +606,9 @@ func msgWithoutParents(kind string, c *Change) string {
 
 // MarkInherited marks the rows of a file's diff whose edits the change did
 // not make: they came along when it was rebased onto a rewritten parent.
-func (r *Review) MarkInherited(v *View, f *File, rows []Row) {
-	if old, new, ok := r.inherited(v, f); ok {
-		MarkRebased(rows, old, new)
+func (r *Review) MarkInherited(v *View, f *File, old, new []byte, rows []Row) {
+	if oldParent, newParent, ok := r.inherited(v, f); ok {
+		MarkRebased(rows, old, new, oldParent, newParent)
 	}
 }
 
@@ -706,7 +706,7 @@ func (r *Review) allInherited(v *View, f *File) bool {
 		return false
 	}
 	rows := Diff(old, new).Rows
-	r.MarkInherited(v, f, rows)
+	r.MarkInherited(v, f, old, new, rows)
 	return AllRebased(rows)
 }
 

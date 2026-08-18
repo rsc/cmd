@@ -475,7 +475,7 @@ func TestRebaseInheritedEdits(t *testing.T) {
 		t.Fatal(err)
 	}
 	rows := Diff(old, new).Rows
-	r.MarkInherited(v, f, rows)
+	r.MarkInherited(v, f, old, new, rows)
 	got := rebasedLines(rows)
 	want := []string{"-b", "+B2"}
 	if !slices.Equal(got, want) {
@@ -499,7 +499,7 @@ func TestRebaseInheritedEdits(t *testing.T) {
 		t.Fatal(err)
 	}
 	rows = Diff(old, new).Rows
-	r.MarkInherited(pv, pf, rows)
+	r.MarkInherited(pv, pf, old, new, rows)
 	if AnyRebased(rows) {
 		t.Errorf("parent view marked rows inherited:\n%s", rowsString(rows))
 	}
