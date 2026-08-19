@@ -27,7 +27,7 @@
         <td class="counts">
           {{if .Resolved}}<span class="chip done">{{.Resolved}} resolved</span>{{end}}
           {{if .Unresolved}}<span class="chip unresolved">{{.Unresolved}} unresolved</span>{{end}}
-          {{if .Drafts}}<span class="chip draftchip">{{.Drafts}} draft</span>{{end}}
+          {{if .Drafts}}<span class="chip draftchip">{{.Drafts}} Draft{{if ne .Drafts 1}}s{{end}}</span>{{end}}
         </td>
         <td class="when" title="when the newest snapshot was taken">{{since .Updated}}</td>
       </tr>

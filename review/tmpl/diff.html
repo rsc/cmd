@@ -7,13 +7,7 @@
       <div class="byline"><a href="{{.FilesURL}}">{{.Change.Subject}}</a></div>
     </div>
     <div class="pageactions">
-      {{if .Drafts}}
-      <form method="post" action="{{.RepoURL}}/publish">
-        <input type="hidden" name="key" value="{{.Key}}">
-        <input type="hidden" name="return" value="{{.SelfURL}}">
-        <button type="submit" class="primary" data-busy="Publishing…">Publish {{.Drafts}} draft{{if ne .Drafts 1}}s{{end}}</button>
-      </form>
-      {{end}}
+      {{template "publishbutton" publishArg .RepoURL .Key .SelfURL .Drafts ""}}
       {{if .CanComment}}{{template "reviewedbutton" reviewedArg .Repo .Target.ID .FileParam .File.Reviewed .FileRebaseOnly}}{{end}}
       <button id="prefsbutton" title="Diff preferences (,)">⚙</button>
     </div>
