@@ -30,16 +30,17 @@ import (
 var embedFS embed.FS
 
 var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
-	"since":       since,
-	"base":        path.Base,
-	"keySections": func() []keySection { return keyHelp },
-	"keyMap":      func() template.JS { return template.JS(keyMapJSON()) },
-	"kbd":         kbdHTML,
-	"threadArg":   threadArg,
-	"reviewedArg": reviewedArg,
-	"snapshotArg": snapshotReviewedArg,
-	"lgtmArg":     lgtmArg,
-	"publishArg":  publishButtonArg,
+	"since":         since,
+	"base":          path.Base,
+	"keySections":   func() []keySection { return keyHelp },
+	"keyMap":        func() template.JS { return template.JS(keyMapJSON()) },
+	"kbd":           kbdHTML,
+	"threadArg":     threadArg,
+	"reviewedArg":   reviewedArg,
+	"snapshotArg":   snapshotReviewedArg,
+	"lgtmArg":       lgtmArg,
+	"publishArg":    publishButtonArg,
+	"publishAllArg": publishAllButtonArg,
 }).ParseFS(embedFS, "tmpl/*.html"))
 
 // since renders a time the way Gerrit does in change lists.
@@ -128,21 +129,34 @@ func lgtmArg(repo string, snapshotID int64, on bool) *reviewedInfo {
 	return &reviewedInfo{URL: "/" + url.PathEscape(repo) + "/f/lgtm?" + q.Encode(), Reviewed: on}
 }
 
-// publishButtonInfo drives the "Publish N Drafts" button. It renders the
-// same on the change page and the diff page, and has to be rebuildable as
-// an out-of-band swap whenever a reply, undelete, or delete changes how
-// many drafts a change has, so that the button updates without the page
-// needing to be reloaded to see it.
+// publishButtonInfo drives the "Publish N Drafts" button, or, on the
+// repository page, "Publish All (N Drafts)". It renders the same wherever
+// it appears, and has to be rebuildable as an out-of-band swap whenever a
+// reply, undelete, or delete changes how many drafts a change or the
+// repository has, so that the button updates without the page needing to
+// be reloaded to see it.
 type publishButtonInfo struct {
 	Drafts  int
 	RepoURL string
-	Key     string
+	Key     string // empty for the repository-wide All button
 	SelfURL string
 	Title   string // shortcut hint; empty where the page has no shortcut for it
+	All     bool   // the repository-wide button, rather than one change's
 }
 
 func publishButtonArg(repoURL, key, selfURL string, drafts int, title string) *publishButtonInfo {
 	return &publishButtonInfo{Drafts: drafts, RepoURL: repoURL, Key: key, SelfURL: selfURL, Title: title}
+}
+
+// publishAllButtonArg builds the repository-wide "Publish All" button
+// that lives on the repository page and, unlike a single change's,
+// publishes every change's drafts at once: the same shape as the
+// snapshot button next to it, which also takes no change to name one.
+func publishAllButtonArg(repoURL string, drafts int) *publishButtonInfo {
+	return &publishButtonInfo{
+		Drafts: drafts, RepoURL: repoURL, SelfURL: repoURL,
+		Title: "Publish every draft in this repository (P)", All: true,
+	}
 }
 
 func boolParam(b bool) string {
@@ -160,9 +174,6 @@ type server struct {
 	pin  bool
 	user string
 	mux  *http.ServeMux
-
-	mu   sync.Mutex
-	open map[string]*Review // by repository path
 
 	// stats remembers how much of each file a comparison changes, and
 	// which files it changes nothing of. Working that out means reading
@@ -224,7 +235,6 @@ func newServer(db *DB, home string, pin bool) *server {
 		pin:  pin,
 		user: user,
 		mux:  http.NewServeMux(),
-		open: map[string]*Review{},
 	}
 	if home != "" {
 		if _, err := s.db.RepoName(home); err != nil {
@@ -280,25 +290,21 @@ func serveStatic(path string) http.HandlerFunc {
 	}
 }
 
-// review returns the repository with the given short name, opening it the
-// first time it is asked for.
+// review returns the repository with the given short name. It reopens the
+// repository on every call, rather than remembering the choice of git or
+// jj backend from the first time it was asked for: jj is sometimes added
+// to a repository review is already serving, and a stale gitRepo cached
+// from before that would never notice.
 func (s *server) review(name string) (*Review, error) {
 	path, err := s.db.RepoPath(name)
 	if err != nil {
 		return nil, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if r := s.open[path]; r != nil {
-		return r, nil
-	}
 	repo, err := OpenRepo(path)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %v", path, err)
 	}
-	r := &Review{Repo: repo, DB: s.db, Pin: s.pin, Name: name}
-	s.open[path] = r
-	return r, nil
+	return &Review{Repo: repo, DB: s.db, Pin: s.pin, Name: name}, nil
 }
 
 // repoHandle wraps a handler that works within one repository, named by
@@ -1484,7 +1490,7 @@ func (s *server) comment(w http.ResponseWriter, req *http.Request, r *Review) er
 				return err
 			}
 		}
-		return s.renderThread(w, r, n)
+		return s.renderThread(w, req, r, n)
 	}
 
 	_, v, _, err := s.fragPage(req, r)
@@ -1548,7 +1554,7 @@ func (s *server) thread(w http.ResponseWriter, req *http.Request, r *Review) err
 	if err != nil {
 		return err
 	}
-	return s.renderThread(w, r, id)
+	return s.renderThread(w, req, r, id)
 }
 
 // editForm returns a form holding an existing draft comment's text.
@@ -1583,7 +1589,7 @@ func (s *server) edit(w http.ResponseWriter, req *http.Request, r *Review) error
 	if err := r.DB.EditComment(id, body); err != nil {
 		return err
 	}
-	return s.renderThread(w, r, c.ThreadID)
+	return s.renderThread(w, req, r, c.ThreadID)
 }
 
 // undoFrag holds everything needed to put a deleted draft back, so that
@@ -1642,7 +1648,7 @@ func (s *server) deleteComment(w http.ResponseWriter, req *http.Request, r *Revi
 	if snap, err := r.DB.SnapshotByID(t.SnapshotID); err == nil {
 		key = snap.Key
 	}
-	return s.publishButtonOOB(w, r, key)
+	return s.publishButtonOOB(w, req, r, key)
 }
 
 // undelete puts back a draft deleted a moment ago, rebuilding its thread
@@ -1665,7 +1671,7 @@ func (s *server) undelete(w http.ResponseWriter, req *http.Request, r *Review) e
 		if _, err := r.DB.AddComment(n, c); err != nil {
 			return err
 		}
-		return s.renderThread(w, r, n)
+		return s.renderThread(w, req, r, n)
 	}
 
 	snapshot, err := strconv.ParseInt(req.FormValue("snapshot"), 10, 64)
@@ -1682,7 +1688,7 @@ func (s *server) undelete(w http.ResponseWriter, req *http.Request, r *Review) e
 			return err
 		}
 	}
-	return s.renderThread(w, r, t.ID)
+	return s.renderThread(w, req, r, t.ID)
 }
 
 func (s *server) resolve(w http.ResponseWriter, req *http.Request, r *Review) error {
@@ -1697,10 +1703,10 @@ func (s *server) resolve(w http.ResponseWriter, req *http.Request, r *Review) er
 	if err := r.DB.SetResolved(id, !t.Resolved); err != nil {
 		return err
 	}
-	return s.renderThread(w, r, id)
+	return s.renderThread(w, req, r, id)
 }
 
-func (s *server) renderThread(w http.ResponseWriter, r *Review, id int64) error {
+func (s *server) renderThread(w http.ResponseWriter, req *http.Request, r *Review, id int64) error {
 	t, err := r.DB.Thread(id)
 	if err != nil {
 		return err
@@ -1718,16 +1724,40 @@ func (s *server) renderThread(w http.ResponseWriter, r *Review, id int64) error 
 	if err := tmpl.ExecuteTemplate(w, "thread", f); err != nil {
 		return err
 	}
-	return s.publishButtonOOB(w, r, key)
+	return s.publishButtonOOB(w, req, r, key)
+}
+
+// isRepoWideRequest reports whether the request came from the repository
+// page's own Comments section, which spans every change and so wants the
+// repo-wide Publish All button, rather than from a single change's page,
+// which wants that one change's Publish button. htmx sends the browser's
+// address at request time as HX-Current-URL; a plain request without one
+// gets the single-change button, the more common case.
+func isRepoWideRequest(req *http.Request) bool {
+	u, err := url.Parse(req.Header.Get("HX-Current-URL"))
+	if err != nil {
+		return false
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	return len(parts) == 1 && parts[0] != ""
 }
 
 // publishButtonOOB writes the Publish button as an out-of-band swap
 // alongside a thread fragment, so that a reply, edit, resolve, undelete,
-// or delete — any of which can change how many drafts a change has —
-// leaves the button honest without the page needing to be reloaded to see
-// it. key empty means the thread's change could not be resolved, and is a
-// no-op: there is nothing to report a draft count for.
-func (s *server) publishButtonOOB(w io.Writer, r *Review, key string) error {
+// or delete — any of which can change how many drafts a change, or the
+// repository, has — leaves the button honest without the page needing to
+// be reloaded to see it. key empty means the thread's change could not be
+// resolved, and is a no-op there: a repo-wide reply has no single change
+// to name, and nothing to report a draft count for otherwise.
+func (s *server) publishButtonOOB(w io.Writer, req *http.Request, r *Review, key string) error {
+	if isRepoWideRequest(req) {
+		drafts, err := r.DB.DraftCount(r.Root())
+		if err != nil {
+			return err
+		}
+		arg := publishAllButtonArg("/"+url.PathEscape(r.Name), drafts)
+		return tmpl.ExecuteTemplate(w, "publishbutton", arg)
+	}
 	if key == "" {
 		return nil
 	}
@@ -1737,7 +1767,7 @@ func (s *server) publishButtonOOB(w io.Writer, r *Review, key string) error {
 	}
 	arg := publishButtonArg(
 		"/"+url.PathEscape(r.Name), key, s.filesURL(r, key, "", ""),
-		countDrafts(threads), "",
+		countDrafts(threads), "Publish drafts (P)",
 	)
 	return tmpl.ExecuteTemplate(w, "publishbutton", arg)
 }
