@@ -28,10 +28,13 @@ type gitRepo struct {
 func (r *gitRepo) Kind() string { return "git" }
 func (r *gitRepo) Root() string { return r.root }
 
-// Changes returns the commits not reachable from any remote ref, newest
-// first, preceded by the uncommitted working tree if it is dirty.
+// Changes returns the commits not reachable from origin, newest first,
+// preceded by the uncommitted working tree if it is dirty. Only origin
+// says what has landed: pushing to another remote, such as a fork used
+// to open a pull request, does not make a commit any less pending, and
+// must not make it disappear from review.
 func (r *gitRepo) Changes() ([]*Change, error) {
-	out, err := run(r.root, "git", "log", gitLogFormat, "HEAD", "--not", "--remotes")
+	out, err := run(r.root, "git", "log", gitLogFormat, "HEAD", "--not", "--remotes=origin")
 	if err != nil {
 		// A repository with no commits at all has no HEAD to log.
 		if _, err2 := run(r.root, "git", "rev-parse", "HEAD"); err2 != nil {
