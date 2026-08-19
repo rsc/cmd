@@ -74,6 +74,16 @@ func (r *Review) EnsureSnapshot(c *Change) ([]*Snapshot, error) {
 // has not moved since the last snapshot, it reports created=false and
 // returns that snapshot unchanged, so that grabbing twice is harmless.
 func (r *Review) Grab(c *Change) (s *Snapshot, created bool, err error) {
+	// A change with no stable identity of its own — a git commit with no
+	// Change-Id trailer, still keyed by its own hash — gets one now,
+	// before it is recorded under a key an amend is about to invalidate.
+	if !c.Working && c.Key == c.Rev {
+		key, err := r.Repo.EnsureStableKey(c.Rev)
+		if err != nil {
+			return nil, false, fmt.Errorf("recording a stable key: %v", err)
+		}
+		c.Key = key
+	}
 	s, created, err = r.DB.AddSnapshot(r.Root(), c)
 	if err != nil {
 		return s, created, err

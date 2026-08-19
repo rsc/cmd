@@ -140,6 +140,10 @@ func (r *jjRepo) Pin(name, rev string) error {
 	return err
 }
 
+// EnsureStableKey is a no-op: every jj commit already has a stable change
+// ID of its own, which Changes and Commit already use as Key.
+func (r *jjRepo) EnsureStableKey(rev string) (string, error) { return rev, nil }
+
 func (r *jjRepo) gitDir() (string, error) {
 	store := filepath.Join(r.root, ".jj", "repo", "store")
 	data, err := os.ReadFile(filepath.Join(store, "git_target"))

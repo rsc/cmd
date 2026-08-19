@@ -302,8 +302,13 @@ store backing the repo, which works whether or not the repo is colocated.
 
 A change is identified by something stabler than its commit hash: in jj,
 the change ID, which is stable across rewrites by design; in git, the
-Change-Id trailer if the commit has one. Failing both, the commit hash is
-used, and comments will not survive an amend.
+Change-Id trailer if the commit has one. Failing both, the first snapshot
+mints a key of its own and records it in a git note under
+refs/notes/review-key, and configures the repository to carry that note
+forward across the amend or rebase that is about to change the commit's
+hash — git's own notes.rewrite mechanism, otherwise off by default. A
+change is only ever without a stable identity of its own for the moment
+before its first snapshot.
 
 Comments additionally record the text of the line they were attached to.
 When a comment written against an earlier snapshot is displayed on a later

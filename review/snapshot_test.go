@@ -133,6 +133,55 @@ func TestViewBetweenSnapshots(t *testing.T) {
 	}
 }
 
+// TestGrabAcrossAmendNoChangeID checks that a git change with no
+// Change-Id trailer still lands its second snapshot on the same change
+// as its first, after an amend that would otherwise make it look like a
+// brand new change with a fresh hash and no history of its own.
+func TestGrabAcrossAmendNoChangeID(t *testing.T) {
+	r, dir := newReview(t)
+	write(t, dir, "a.go", "one\ntwo\nthree\n")
+	do(t, dir, "git", "add", ".")
+	do(t, dir, "git", "commit", "-q", "-m", "add a.go") // no Change-Id
+
+	changes, _ := r.Repo.Changes()
+	c := changes[0]
+	rev1 := c.Rev
+	if c.Key != rev1 {
+		t.Fatalf("Key = %q before any snapshot, want the hash %q", c.Key, rev1)
+	}
+	if _, err := r.EnsureSnapshot(c); err != nil {
+		t.Fatal(err)
+	}
+	key := c.Key // EnsureSnapshot mints the stable key into c itself
+	if key == rev1 {
+		t.Fatal("EnsureSnapshot left Key as the hash; want a minted key")
+	}
+
+	write(t, dir, "a.go", "one\nTWO\nthree\n")
+	do(t, dir, "git", "add", ".")
+	do(t, dir, "git", "commit", "-q", "--amend", "--no-edit")
+
+	changes, _ = r.Repo.Changes()
+	if len(changes) != 1 {
+		t.Fatalf("Changes = %d changes after amend, want 1 (not a second, unrelated change)", len(changes))
+	}
+	c2 := changes[0]
+	if c2.Rev == rev1 {
+		t.Fatal("amend did not change the hash; test is not exercising anything")
+	}
+	if c2.Key != key {
+		t.Fatalf("Key after amend = %q, want the same key as before amend, %q", c2.Key, key)
+	}
+
+	s2, created, err := r.Grab(c2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created || s2.N != 2 {
+		t.Fatalf("grab = %+v, created=%v; want snapshot 2 of the same change", s2, created)
+	}
+}
+
 func TestPlaceThreads(t *testing.T) {
 	r, dir := newReview(t)
 	write(t, dir, "a.go", "one\ntwo\nthree\n")
