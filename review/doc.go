@@ -66,9 +66,11 @@ repository, and from a repository to the list of them all.
 Which changes are pending depends on the version control system. In a jj
 repository they are the mutable commits, which includes the working-copy
 commit @, so uncommitted work shows up without any special handling. In a
-git repository they are the commits not reachable from any remote ref,
-plus a synthetic change holding the uncommitted working tree, so that the
-two kinds of repository behave alike.
+git repository they are the commits not reachable from origin, plus a
+synthetic change holding the uncommitted working tree, so that the two
+kinds of repository behave alike. Only origin says a commit has landed;
+pushing it to another remote, such as a fork used to open a pull request,
+does not take it out of review.
 
 Clicking a change lists its files. The commit message is presented as the
 first file, named /COMMIT_MSG, so that it can be reviewed and commented on

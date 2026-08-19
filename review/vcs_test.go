@@ -100,6 +100,32 @@ func TestGitChanges(t *testing.T) {
 	}
 }
 
+// TestGitChangesIgnoresNonOriginRemote checks that pushing a commit to a
+// remote other than origin -- a fork used to open a pull request, say --
+// does not make it disappear from the pending list. Only origin says a
+// commit has landed.
+func TestGitChangesIgnoresNonOriginRemote(t *testing.T) {
+	dir := newGitRepo(t)
+	write(t, dir, "a.txt", "one\ntwo\n")
+	do(t, dir, "git", "add", ".")
+	do(t, dir, "git", "commit", "-q", "-m", "add a.txt")
+	// Pretend this commit was pushed to a fork remote to open a PR.
+	head := do(t, dir, "git", "rev-parse", "HEAD")
+	do(t, dir, "git", "update-ref", "refs/remotes/fork/main", head[:len(head)-1])
+
+	r, err := OpenRepo(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changes, err := r.Changes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 || changes[0].Subject != "add a.txt" {
+		t.Fatalf("Changes = %+v, want the commit pushed only to the fork remote still pending", changes)
+	}
+}
+
 func TestGitChangeID(t *testing.T) {
 	dir := newGitRepo(t)
 	write(t, dir, "a.txt", "x\n")
