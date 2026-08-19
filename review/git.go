@@ -5,6 +5,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -39,9 +41,10 @@ func (r *gitRepo) Changes() ([]*Change, error) {
 		}
 	}
 
+	notes := r.noteKeys()
 	var changes []*Change
 	for _, rec := range records(out, 1) {
-		c, err := parseGitCommit(rec)
+		c, err := parseGitCommit(rec, notes)
 		if err != nil {
 			return nil, err
 		}
@@ -55,7 +58,7 @@ func (r *gitRepo) Changes() ([]*Change, error) {
 	if w != nil {
 		changes = append([]*Change{w}, changes...)
 	}
-	r.setParentKeys(changes)
+	r.setParentKeys(changes, notes)
 	return changes, nil
 }
 
@@ -66,7 +69,7 @@ func (r *gitRepo) Changes() ([]*Change, error) {
 // A commit with no Change-Id trailer has no identity apart from its hash,
 // which the commit message file already shows on its own line, so those
 // parents are left unnamed rather than named twice.
-func (r *gitRepo) setParentKeys(changes []*Change) {
+func (r *gitRepo) setParentKeys(changes []*Change, notes map[string]string) {
 	keys := make(map[string]string, len(changes))
 	for _, c := range changes {
 		keys[c.Rev] = c.Key
@@ -85,7 +88,7 @@ func (r *gitRepo) setParentKeys(changes []*Change) {
 		args := append([]string{"git", "log", "--no-walk", gitLogFormat}, missing...)
 		if out, err := run(r.root, args...); err == nil {
 			for _, rec := range records(out, 1) {
-				if p, err := parseGitCommit(rec); err == nil {
+				if p, err := parseGitCommit(rec, notes); err == nil {
 					keys[p.Rev] = p.Key
 				}
 			}
@@ -143,15 +146,16 @@ func (r *gitRepo) Commit(rev string) (*Change, error) {
 	if len(recs) != 1 {
 		return nil, fmt.Errorf("git log %s: got %d commits", rev, len(recs))
 	}
-	c, err := parseGitCommit(recs[0])
+	notes := r.noteKeys()
+	c, err := parseGitCommit(recs[0], notes)
 	if err != nil {
 		return nil, err
 	}
-	r.setParentKeys([]*Change{c})
+	r.setParentKeys([]*Change{c}, notes)
 	return c, nil
 }
 
-func parseGitCommit(rec string) (*Change, error) {
+func parseGitCommit(rec string, notes map[string]string) (*Change, error) {
 	f := strings.SplitN(rec, "\x00", 5)
 	if len(f) != 5 {
 		return nil, fmt.Errorf("malformed git log record %q", rec)
@@ -166,7 +170,7 @@ func parseGitCommit(rec string) (*Change, error) {
 	}
 	msg := f[4]
 	return &Change{
-		Key:     changeKey(f[0], msg),
+		Key:     changeKey(f[0], msg, notes),
 		Rev:     f[0],
 		Parent:  parent,
 		Subject: subject(msg),
@@ -177,9 +181,11 @@ func parseGitCommit(rec string) (*Change, error) {
 }
 
 // changeKey returns the stable identity of a git commit: its Change-Id
-// trailer if it has one, so that comments survive an amend, and otherwise
-// the commit hash, which does not.
-func changeKey(rev, msg string) string {
+// trailer if it has one, so that comments survive an amend; otherwise the
+// key EnsureStableKey minted for it and recorded in a git note, if Grab
+// has snapshotted it before; otherwise the commit hash, which survives
+// neither an amend nor, until something snapshots it, a rebase.
+func changeKey(rev, msg string, notes map[string]string) string {
 	for line := range strings.Lines(msg) {
 		line = strings.TrimSpace(line)
 		if id, ok := strings.CutPrefix(line, "Change-Id:"); ok {
@@ -187,6 +193,9 @@ func changeKey(rev, msg string) string {
 				return id
 			}
 		}
+	}
+	if key, ok := notes[rev]; ok {
+		return key
 	}
 	return rev
 }
@@ -287,4 +296,94 @@ func (r *gitRepo) Pin(name, rev string) error {
 	}
 	_, err := run(r.root, "git", "update-ref", pinRef+name, rev)
 	return err
+}
+
+// reviewNotesRef holds one note per commit that changeKey has had to fall
+// back to the commit's own hash for: a commit with no Change-Id trailer.
+// The note's content is the key EnsureStableKey minted for it, so that a
+// later amend or rebase, which changes the hash, does not also start the
+// change over as if it were new.
+const reviewNotesRef = "refs/notes/review-key"
+
+// noteKeys reads every note under reviewNotesRef, returning the commit
+// hashes that were still on it as of the last snapshot mapped to the key
+// recorded for each. One call reads the whole repository's worth, which
+// changeKey then just looks up per commit, rather than shelling out once
+// per commit for what is normally a short list.
+func (r *gitRepo) noteKeys() map[string]string {
+	out, err := run(r.root, "git", "notes", "--ref="+reviewNotesRef, "list")
+	if err != nil {
+		return nil
+	}
+	var keys map[string]string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		f := strings.Fields(line)
+		if len(f) != 2 {
+			continue
+		}
+		blob, rev := f[0], f[1]
+		content, err := run(r.root, "git", "cat-file", "blob", blob)
+		if err != nil {
+			continue
+		}
+		if keys == nil {
+			keys = map[string]string{}
+		}
+		keys[rev] = strings.TrimSpace(string(content))
+	}
+	return keys
+}
+
+// EnsureStableKey mints a key for rev and records it in a git note under
+// reviewNotesRef if rev does not already carry one there, and configures
+// the repository to carry that note forward across the amend or rebase
+// that is normally about to change rev's hash out from under it. Called
+// only for a commit changeKey has resolved to its own hash, for lack of
+// anything sturdier: see changeKey.
+func (r *gitRepo) EnsureStableKey(rev string) (string, error) {
+	if out, err := run(r.root, "git", "notes", "--ref="+reviewNotesRef, "show", rev); err == nil {
+		if key := strings.TrimSpace(string(out)); key != "" {
+			return key, nil
+		}
+	}
+	if err := r.ensureNotesCarryForward(); err != nil {
+		return "", err
+	}
+	key := newReviewKey()
+	if _, err := run(r.root, "git", "notes", "--ref="+reviewNotesRef, "add", "-f", "-m", key, rev); err != nil {
+		return "", err
+	}
+	return key, nil
+}
+
+// ensureNotesCarryForward configures the repository so that an amend or a
+// rebase carries a reviewNotesRef note from the commit it rewrote to the
+// commit it produced — git's own notes.rewrite mechanism, off by default.
+// Idempotent: safe to call before every note this package writes.
+func (r *gitRepo) ensureNotesCarryForward() error {
+	if _, err := run(r.root, "git", "config", "notes.rewrite.amend", "true"); err != nil {
+		return err
+	}
+	if _, err := run(r.root, "git", "config", "notes.rewrite.rebase", "true"); err != nil {
+		return err
+	}
+	out, _ := run(r.root, "git", "config", "--get-all", "notes.rewriteRef")
+	for _, ref := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if ref == reviewNotesRef {
+			return nil
+		}
+	}
+	_, err := run(r.root, "git", "config", "--add", "notes.rewriteRef", reviewNotesRef)
+	return err
+}
+
+// newReviewKey returns a fresh, effectively unique change key in the same
+// shape as a Change-Id, but prefixed R rather than I so that the two are
+// never mistaken for each other in a log or a URL.
+func newReviewKey() string {
+	var b [20]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic(err) // crypto/rand not working is not a recoverable state
+	}
+	return "R" + hex.EncodeToString(b[:])
 }

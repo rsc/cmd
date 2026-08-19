@@ -132,6 +132,64 @@ func TestGitChangeID(t *testing.T) {
 	}
 }
 
+// TestGitStableKeyNoChangeID checks that a commit with no Change-Id
+// trailer, whose only identity is otherwise its hash, keeps the key
+// EnsureStableKey mints for it across an amend that changes the hash.
+func TestGitStableKeyNoChangeID(t *testing.T) {
+	dir := newGitRepo(t)
+	write(t, dir, "a.txt", "x\n")
+	do(t, dir, "git", "add", ".")
+	do(t, dir, "git", "commit", "-q", "-m", "subject, no Change-Id")
+
+	r, err := OpenRepo(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changes, err := r.Changes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rev := changes[0].Rev
+	if changes[0].Key != rev {
+		t.Fatalf("Key = %q before EnsureStableKey, want the hash %q", changes[0].Key, rev)
+	}
+
+	key, err := r.EnsureStableKey(rev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key == rev {
+		t.Fatalf("EnsureStableKey returned the hash unchanged, want a minted key")
+	}
+	if again, err := r.EnsureStableKey(rev); err != nil || again != key {
+		t.Errorf("EnsureStableKey(rev) a second time = %q, %v, want %q, nil (idempotent)", again, err, key)
+	}
+
+	changes, err = r.Changes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changes[0].Key != key {
+		t.Errorf("Key = %q after EnsureStableKey, want %q", changes[0].Key, key)
+	}
+
+	// Amending changes the hash. The note travels with it, since
+	// EnsureStableKey configured the repository to carry it forward.
+	write(t, dir, "a.txt", "y\n")
+	do(t, dir, "git", "add", ".")
+	do(t, dir, "git", "commit", "-q", "--amend", "--no-edit")
+	changes, err = r.Changes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changes[0].Rev == rev {
+		t.Fatal("amend did not change the hash; test is not exercising anything")
+	}
+	if changes[0].Key != key {
+		t.Errorf("Key changed across amend: %q -> %q, want it to stay %q", key, changes[0].Key, key)
+	}
+}
+
 func TestGitWorkingTree(t *testing.T) {
 	dir := newGitRepo(t)
 

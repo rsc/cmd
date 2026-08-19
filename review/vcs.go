@@ -120,6 +120,14 @@ type Repo interface {
 	// Pin records a reference to rev under the given name, so that the
 	// commit survives garbage collection after it has been amended away.
 	Pin(name, rev string) error
+
+	// EnsureStableKey returns a stable identity for rev, minting and
+	// recording one if rev does not already have one on its own — a git
+	// commit with no Change-Id trailer, whose only identity is otherwise
+	// its hash, which does not survive an amend. It is a no-op returning
+	// rev unchanged wherever every commit already has a stable identity,
+	// as jj's do and a git commit with a Change-Id does.
+	EnsureStableKey(rev string) (string, error)
 }
 
 // ErrNoRepo reports that a directory is not inside a repository, which
