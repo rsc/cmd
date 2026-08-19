@@ -236,6 +236,11 @@
 		},
 
 		grabSnapshot() {
+			// G fires the same request the Snapshot / Snapshot All button
+			// would, without going through the button, so nothing marks it
+			// busy on its own; do that here instead, on whichever of the
+			// two is on the page.
+			markBusy(document.querySelector('form[action$="/snapshot"] button[type="submit"]'));
 			const picked = Array.from(document.querySelectorAll("input.pickbox:checked"))
 				.map((b) => b.closest("tr").dataset.key);
 			const row = currentRow();
@@ -658,25 +663,32 @@
 		}
 	});
 
-	// A form that posts and reloads leaves the page looking untouched while
-	// the server works, and snapshotting a repository full of changes takes
-	// long enough to press the button a second time. Say so in the button
-	// itself, and stop it being pressed again; the page is about to be
-	// replaced, so nothing has to put it back.
-	//
-	// Only plain posting forms are caught. The comment forms are htmx's,
-	// which have no method of their own and swap in place too quickly to
-	// need any of this.
-	document.addEventListener("submit", function (e) {
-		const form = e.target.closest("form");
-		if (!form || form.method.toLowerCase() !== "post") return;
-		const b = form.querySelector('button[type="submit"]');
+	// markBusy says a button's form is under way: its own label while the
+	// server works, in place of the page looking untouched, and stopped
+	// from being pressed again. The page is about to be replaced once the
+	// request finishes, so nothing has to put the button back.
+	function markBusy(b) {
 		if (!b || b.disabled) return;
 		if (b.dataset.busy) b.textContent = b.dataset.busy;
 		b.classList.add("busy");
-		// Disabling it now would drop it from the submission in some
-		// browsers, so wait until the request is on its way.
+		// Disabling it now would drop it from a real form submission in
+		// some browsers, so wait until the request is on its way.
 		setTimeout(() => { b.disabled = true; }, 0);
+	}
+
+	// A form that posts and reloads leaves the page looking untouched while
+	// the server works, and snapshotting a repository full of changes takes
+	// long enough to press the button a second time.
+	//
+	// Only plain posting forms are caught here. The comment forms are
+	// htmx's, which have no method of their own and swap in place too
+	// quickly to need any of this. G triggers the same forms without
+	// submitting them — see grabSnapshot — so it marks its button busy
+	// directly rather than through this listener.
+	document.addEventListener("submit", function (e) {
+		const form = e.target.closest("form");
+		if (!form || form.method.toLowerCase() !== "post") return;
+		markBusy(form.querySelector('button[type="submit"]'));
 	});
 
 	// The filter box hides rows that do not match, like Gerrit's search.
