@@ -7,7 +7,7 @@
       <div class="byline">{{.Change.Author}} · <code>{{.Change.ShortRev}}</code> · {{since .Change.Date}}</div>
     </div>
     <div class="pageactions">
-      {{template "publishbutton" publishArg .RepoURL .Key .SelfURL .Drafts "Publish drafts (a)"}}
+      {{template "publishbutton" publishArg .RepoURL .Key .SelfURL .Drafts "Publish drafts (P)"}}
       {{if .CanComment}}{{template "lgtmbutton" lgtmArg .Repo .Target.ID .LGTM}}{{end}}
       {{if not .Change.Working}}
       <form method="post" action="{{.RepoURL}}/snapshot">

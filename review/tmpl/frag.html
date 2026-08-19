@@ -183,9 +183,9 @@
 <span id="publishbutton" style="display:contents" hx-swap-oob="true">
 {{if .Drafts}}
 <form method="post" action="{{.RepoURL}}/publish">
-  <input type="hidden" name="key" value="{{.Key}}">
+  {{if not .All}}<input type="hidden" name="key" value="{{.Key}}">{{end}}
   <input type="hidden" name="return" value="{{.SelfURL}}">
-  <button type="submit" class="primary" data-busy="Publishing…"{{if .Title}} title="{{.Title}}"{{end}}>Publish {{.Drafts}} Draft{{if ne .Drafts 1}}s{{end}}</button>
+  <button type="submit" class="primary" data-busy="Publishing…"{{if .Title}} title="{{.Title}}"{{end}}>{{if .All}}Publish All ({{.Drafts}} Draft{{if ne .Drafts 1}}s{{end}}){{else}}Publish {{.Drafts}} Draft{{if ne .Drafts 1}}s{{end}}{{end}}</button>
 </form>
 {{end}}
 </span>
