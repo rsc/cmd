@@ -99,9 +99,7 @@ A change publishes its own drafts from the button on its page, or the a
 key, as in Gerrit. The repository's page has a button that publishes every
 draft in the repository, across all of its changes, for a review written a
 commit at a time up a stack; it says how many it will publish and is not
-there when there are none. That one has no key of its own on purpose: it
-cannot be undone, it reaches past what is on screen, and a is one finger
-away from the keys that move around that page.
+there when there are none. It shares Publish's P.
 
 The diff colors are Gerrit's, taken from its source rather than
 approximated, because they are chosen to stay legible for color-blind
