@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -38,6 +39,7 @@ var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 	"reviewedArg": reviewedArg,
 	"snapshotArg": snapshotReviewedArg,
 	"lgtmArg":     lgtmArg,
+	"publishArg":  publishButtonArg,
 }).ParseFS(embedFS, "tmpl/*.html"))
 
 // since renders a time the way Gerrit does in change lists.
@@ -124,6 +126,23 @@ func lgtmArg(repo string, snapshotID int64, on bool) *reviewedInfo {
 	q := url.Values{"snapshot": {strconv.FormatInt(snapshotID, 10)}}
 	q.Set("on", boolParam(!on))
 	return &reviewedInfo{URL: "/" + url.PathEscape(repo) + "/f/lgtm?" + q.Encode(), Reviewed: on}
+}
+
+// publishButtonInfo drives the "Publish N Drafts" button. It renders the
+// same on the change page and the diff page, and has to be rebuildable as
+// an out-of-band swap whenever a reply, undelete, or delete changes how
+// many drafts a change has, so that the button updates without the page
+// needing to be reloaded to see it.
+type publishButtonInfo struct {
+	Drafts  int
+	RepoURL string
+	Key     string
+	SelfURL string
+	Title   string // shortcut hint; empty where the page has no shortcut for it
+}
+
+func publishButtonArg(repoURL, key, selfURL string, drafts int, title string) *publishButtonInfo {
+	return &publishButtonInfo{Drafts: drafts, RepoURL: repoURL, Key: key, SelfURL: selfURL, Title: title}
 }
 
 func boolParam(b bool) string {
@@ -389,8 +408,12 @@ type changeInfo struct {
 
 type changesPage struct {
 	head
-	Changes []*changeInfo
-	Drafts  int // unpublished comments anywhere in the repository
+	Changes           []*changeInfo
+	Drafts            int           // unpublished comments anywhere in the repository
+	ResolvedThreads   []*threadFrag // resolved threads across every change, newest first
+	UnresolvedThreads []*threadFrag // unresolved threads across every change, newest first
+	Resolved          int
+	Unresolved        int
 }
 
 func (s *server) changes(w http.ResponseWriter, req *http.Request, r *Review) error {
@@ -399,6 +422,7 @@ func (s *server) changes(w http.ResponseWriter, req *http.Request, r *Review) er
 		return err
 	}
 	p := &changesPage{head: s.head(r, "review: "+r.Name, "changes")}
+	byKey := map[string]*changeInfo{}
 	for _, c := range changes {
 		info, err := s.changeInfo(r, c)
 		if err != nil {
@@ -406,11 +430,91 @@ func (s *server) changes(w http.ResponseWriter, req *http.Request, r *Review) er
 		}
 		info.URL = s.filesURL(r, c.Key, "", "")
 		p.Changes = append(p.Changes, info)
+		byKey[c.Key] = info
 	}
 	if p.Drafts, err = r.DB.DraftCount(r.Root()); err != nil {
 		return err
 	}
+	if p.ResolvedThreads, p.UnresolvedThreads, err = s.repoThreads(r, byKey); err != nil {
+		return err
+	}
+	p.Resolved, p.Unresolved = len(p.ResolvedThreads), len(p.UnresolvedThreads)
 	return tmpl.ExecuteTemplate(w, "changes.html", p)
+}
+
+// splitThreads partitions threads into resolved and unresolved, each
+// sorted newest first: whatever happened most recently is what is worth
+// seeing without scrolling, on both sides of the split.
+func splitThreads(threads []*Thread) (resolved, unresolved []*Thread) {
+	sorted := append([]*Thread{}, threads...)
+	sort.Slice(sorted, func(i, j int) bool {
+		if !sorted[i].Created.Equal(sorted[j].Created) {
+			return sorted[i].Created.After(sorted[j].Created)
+		}
+		return sorted[i].ID > sorted[j].ID
+	})
+	for _, t := range sorted {
+		if t.Resolved {
+			resolved = append(resolved, t)
+		} else {
+			unresolved = append(unresolved, t)
+		}
+	}
+	return resolved, unresolved
+}
+
+// repoThreads gathers every comment thread in the repository, split into
+// resolved and unresolved and each sorted newest first. byKey supplies
+// each thread's change, for the subject and link the thread's own
+// snapshot cannot say by itself.
+func (s *server) repoThreads(r *Review, byKey map[string]*changeInfo) (resolvedOut, unresolvedOut []*threadFrag, err error) {
+	threads, err := r.DB.AllThreads(r.Root())
+	if err != nil {
+		return nil, nil, err
+	}
+	resolved, unresolved := splitThreads(threads)
+
+	snaps := map[int64]*Snapshot{}
+	frag := func(t *Thread) (*threadFrag, error) {
+		snap, ok := snaps[t.SnapshotID]
+		if !ok {
+			var err error
+			if snap, err = r.DB.SnapshotByID(t.SnapshotID); err != nil {
+				return nil, err
+			}
+			snaps[t.SnapshotID] = snap
+		}
+		latest := 0
+		info := byKey[snap.Key]
+		if info != nil {
+			latest = info.Snapshots
+		}
+		f := s.threadFrag(r, t, snap.Key, latest)
+		// A thread on a change no longer pending — submitted, or
+		// abandoned since — has no row in byKey and so no subject or
+		// link to show; it is still listed, just without the change
+		// context a live one gets.
+		if info != nil {
+			f.ChangeSubject = info.Subject
+			f.ChangeURL = info.URL
+		}
+		return f, nil
+	}
+	for _, t := range resolved {
+		f, err := frag(t)
+		if err != nil {
+			return nil, nil, err
+		}
+		resolvedOut = append(resolvedOut, f)
+	}
+	for _, t := range unresolved {
+		f, err := frag(t)
+		if err != nil {
+			return nil, nil, err
+		}
+		unresolvedOut = append(unresolvedOut, f)
+	}
+	return resolvedOut, unresolvedOut, nil
 }
 
 // repoInfo names one repository on the all-repositories page.
@@ -601,17 +705,18 @@ type filesPage struct {
 	head
 	*View
 	nav
-	MessageHead string // the first messageLines lines of the commit message
-	MessageRest string // the rest of it, empty when there is no more
-	MoreLines   int
-	Files       []*fileInfo
-	Reviewed    map[int64]bool // snapshots marked reviewed, by snapshot ID
-	LGTMs       map[int64]bool // snapshots marked LGTM, by snapshot ID
-	LGTM        bool           // the snapshot being viewed is marked LGTM
-	Threads     []*threadFrag  // comment history, oldest first
-	Resolved    int            // comment threads settled
-	Unresolved  int            // comment threads still open
-	Drafts      int
+	MessageHead       string // the first messageLines lines of the commit message
+	MessageRest       string // the rest of it, empty when there is no more
+	MoreLines         int
+	Files             []*fileInfo
+	Reviewed          map[int64]bool // snapshots marked reviewed, by snapshot ID
+	LGTMs             map[int64]bool // snapshots marked LGTM, by snapshot ID
+	LGTM              bool           // the snapshot being viewed is marked LGTM
+	ResolvedThreads   []*threadFrag  // resolved comment threads, newest first
+	UnresolvedThreads []*threadFrag  // unresolved comment threads, newest first
+	Resolved          int            // comment threads settled
+	Unresolved        int            // comment threads still open
+	Drafts            int
 
 	// RebaseOnlyCount is how many of Files the change does not touch. They
 	// are rendered but hidden, and this drives the link that brings them
@@ -703,22 +808,15 @@ func (s *server) files(w http.ResponseWriter, req *http.Request, r *Review) erro
 	p.MessageHead, p.MessageRest, p.MoreLines = splitMessage(c.Message)
 	p.Drafts = countDrafts(threads)
 
-	// The comment history reads chronologically, not in file order the
-	// way the per-file counts above are gathered.
-	history := append([]*Thread{}, threads...)
-	sort.Slice(history, func(i, j int) bool {
-		if !history[i].Created.Equal(history[j].Created) {
-			return history[i].Created.Before(history[j].Created)
-		}
-		return history[i].ID < history[j].ID
-	})
-	for _, t := range history {
-		if t.Resolved {
-			p.Resolved++
-		} else {
-			p.Unresolved++
-		}
-		p.Threads = append(p.Threads, s.threadFrag(r, t, c.Key, v.LatestN()))
+	// The tabs read newest first: whatever just happened is what is worth
+	// seeing without scrolling.
+	resolved, unresolved := splitThreads(threads)
+	p.Resolved, p.Unresolved = len(resolved), len(unresolved)
+	for _, t := range resolved {
+		p.ResolvedThreads = append(p.ResolvedThreads, s.threadFrag(r, t, c.Key, v.LatestN()))
+	}
+	for _, t := range unresolved {
+		p.UnresolvedThreads = append(p.UnresolvedThreads, s.threadFrag(r, t, c.Key, v.LatestN()))
 	}
 	return tmpl.ExecuteTemplate(w, "files.html", p)
 }
@@ -1326,6 +1424,13 @@ type threadFrag struct {
 	Line    int
 	Unified bool
 	User    string
+
+	// ChangeSubject and ChangeURL name the change a thread belongs to, for
+	// a list that spans more than one change, such as the repository
+	// page's. Left empty wherever the surrounding page already says which
+	// change is being looked at.
+	ChangeSubject string
+	ChangeURL     string
 }
 
 // form returns an empty comment or reply form.
@@ -1530,7 +1635,14 @@ func (s *server) deleteComment(w http.ResponseWriter, req *http.Request, r *Revi
 			return err
 		}
 	}
-	return tmpl.ExecuteTemplate(w, "deleted", undo)
+	if err := tmpl.ExecuteTemplate(w, "deleted", undo); err != nil {
+		return err
+	}
+	key := ""
+	if snap, err := r.DB.SnapshotByID(t.SnapshotID); err == nil {
+		key = snap.Key
+	}
+	return s.publishButtonOOB(w, r, key)
 }
 
 // undelete puts back a draft deleted a moment ago, rebuilding its thread
@@ -1594,14 +1706,40 @@ func (s *server) renderThread(w http.ResponseWriter, r *Review, id int64) error 
 		return err
 	}
 	f := &threadFrag{Thread: t, Repo: r.Name, User: s.user}
+	key := ""
 	if snap, err := r.DB.SnapshotByID(t.SnapshotID); err == nil {
+		key = snap.Key
 		latest := 0
 		if snaps, err := r.DB.Snapshots(r.Root(), snap.Key); err == nil && len(snaps) > 0 {
 			latest = snaps[len(snaps)-1].N
 		}
 		f = s.threadFrag(r, t, snap.Key, latest)
 	}
-	return tmpl.ExecuteTemplate(w, "thread", f)
+	if err := tmpl.ExecuteTemplate(w, "thread", f); err != nil {
+		return err
+	}
+	return s.publishButtonOOB(w, r, key)
+}
+
+// publishButtonOOB writes the Publish button as an out-of-band swap
+// alongside a thread fragment, so that a reply, edit, resolve, undelete,
+// or delete — any of which can change how many drafts a change has —
+// leaves the button honest without the page needing to be reloaded to see
+// it. key empty means the thread's change could not be resolved, and is a
+// no-op: there is nothing to report a draft count for.
+func (s *server) publishButtonOOB(w io.Writer, r *Review, key string) error {
+	if key == "" {
+		return nil
+	}
+	threads, err := r.DB.Threads(r.Root(), key)
+	if err != nil {
+		return err
+	}
+	arg := publishButtonArg(
+		"/"+url.PathEscape(r.Name), key, s.filesURL(r, key, "", ""),
+		countDrafts(threads), "",
+	)
+	return tmpl.ExecuteTemplate(w, "publishbutton", arg)
 }
 
 func (s *server) reviewed(w http.ResponseWriter, req *http.Request, r *Review) error {

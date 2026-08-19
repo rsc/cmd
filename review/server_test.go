@@ -341,7 +341,7 @@ func TestServerPublish(t *testing.T) {
 		"key": {"Itest1"}, "f": {"a.go"}, "side": {"new"}, "line": {"1"}, "body": {"a draft"},
 	})
 
-	if body := mustGet(t, s, repoURL(t, r, "/c/Itest1")); !strings.Contains(body, "Publish 1 draft") {
+	if body := mustGet(t, s, repoURL(t, r, "/c/Itest1")); !strings.Contains(body, "Publish 1 Draft") {
 		t.Errorf("file list has no publish button:\n%s", body)
 	}
 	w := post(t, s, repoURL(t, r, "/publish"), url.Values{"key": {"Itest1"}, "return": {repoURL(t, r, "/c/Itest1")}})
@@ -351,6 +351,45 @@ func TestServerPublish(t *testing.T) {
 	threads, _ := r.DB.Threads(r.Root(), "Itest1")
 	if threads[0].Comments[0].Draft {
 		t.Error("comment is still a draft after publishing")
+	}
+}
+
+// TestReplyUpdatesPublishButtonOOB checks that replying to a thread ships
+// a fresh Publish button alongside the reply, out of band, so that the
+// button appears without the page being reloaded -- a reply used to leave
+// it looking like there was nothing to publish until the next full load.
+func TestReplyUpdatesPublishButtonOOB(t *testing.T) {
+	s, r, _ := newTestServer(t)
+	mustGet(t, s, repoURL(t, r, "/c/Itest1")) // implicit snapshot 1
+
+	snaps, err := r.DB.Snapshots(r.Root(), "Itest1")
+	if err != nil || len(snaps) == 0 {
+		t.Fatal(err)
+	}
+	th, err := r.DB.AddThread(snaps[0].ID, "a.go", "new", 1, "package main", &Comment{
+		Author: "rsc", Body: "first", Draft: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// No drafts yet: the button is absent from a normal page load. (The
+	// keyboard help dialog mentions "Publish" too, so check for the form.)
+	publishForm := `action="` + repoURL(t, r, "/publish") + `"`
+	if body := mustGet(t, s, repoURL(t, r, "/c/Itest1")); strings.Contains(body, publishForm) {
+		t.Fatalf("publish button present with nothing to publish:\n%s", body)
+	}
+
+	w := post(t, s, repoURL(t, r, "/f/comment"), url.Values{"thread": {strconv.FormatInt(th.ID, 10)}, "body": {"a reply"}})
+	if w.Code != http.StatusOK {
+		t.Fatalf("reply = %d: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `id="publishbutton"`) || !strings.Contains(body, `hx-swap-oob="true"`) {
+		t.Fatalf("reply response carries no out-of-band publish button:\n%s", body)
+	}
+	if !strings.Contains(body, "Publish 1 Draft") {
+		t.Errorf("out-of-band button does not report the new draft:\n%s", body)
 	}
 }
 
@@ -616,9 +655,10 @@ func TestChangePageCommentHistory(t *testing.T) {
 			t.Errorf("change page missing %q:\n%s", want, body)
 		}
 	}
-	// Oldest first.
-	if i, j := strings.Index(body, "first remark"), strings.Index(body, "second remark"); i > j {
-		t.Error("comment history is not in chronological order")
+	// Newest first: neither thread is resolved, so both are in the
+	// unresolved tab, and the one added later should come first.
+	if i, j := strings.Index(body, "first remark"), strings.Index(body, "second remark"); j > i {
+		t.Error("comment history is not ordered newest to oldest")
 	}
 	// After the file list, not before it.
 	if files, hist := strings.Index(body, `class="filelist"`), strings.Index(body, `class="history"`); files > hist {
@@ -638,8 +678,9 @@ func TestChangePageCommentHistory(t *testing.T) {
 	if !strings.Contains(body, "f=%2FCOMMIT_MSG&amp;s=2#thread-") {
 		t.Errorf("comment on the newest snapshot did not link to it plainly:\n%s", body)
 	}
-	// The summary counts threads by whether they are settled, not comments.
-	for _, want := range []string{"2 unresolved", "1 draft"} {
+	// The tabs count threads by whether they are settled, not comments,
+	// and the draft summary line says how many are still unsent.
+	for _, want := range []string{"2 unresolved", "1 Draft"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("history summary missing %q", want)
 		}
@@ -757,7 +798,7 @@ func TestChangeListCounts(t *testing.T) {
 	counts := changeCounts(t, mustGet(t, s, "/"), "Itest1")
 	// 3 comments across 2 threads, one settled and one not, and both
 	// drafts still unpublished.
-	for _, want := range []string{"1 resolved", "1 unresolved", "2 draft"} {
+	for _, want := range []string{"1 resolved", "1 unresolved", "2 Draft"} {
 		if !strings.Contains(counts, want) {
 			t.Errorf("change row missing %q:\n%s", want, counts)
 		}
@@ -1930,7 +1971,7 @@ func TestPublishAll(t *testing.T) {
 	}
 
 	page = mustGet(t, s, repoURL(t, r, ""))
-	if !strings.Contains(page, "Publish All (2 drafts)") {
+	if !strings.Contains(page, "Publish All (2 Drafts)") {
 		t.Errorf("publish button missing or miscounted:\n%s", page)
 	}
 
@@ -2198,5 +2239,155 @@ func TestChangeListShowsSnapshotTime(t *testing.T) {
 	}
 	if strings.Contains(body, "Jan 2, 2020") {
 		t.Error("the commit's own date is still shown")
+	}
+}
+
+// TestRepoPageCommentsTabs checks the Comments section on the repository
+// page: resolved and unresolved threads land in their own tabs, both
+// sorted newest first, unresolved is the tab selected by default, and
+// each thread names the change it belongs to, since the section spans
+// every change in the repository.
+func TestRepoPageCommentsTabs(t *testing.T) {
+	r, dir := newReview(t)
+	s := newServer(r.DB, r.Root(), r.Pin)
+
+	write(t, dir, "a.go", "package p\n\nfunc F() {}\n")
+	do(t, dir, "git", "add", ".")
+	do(t, dir, "git", "commit", "-q", "-m", "one\n\nChange-Id: Ione\n")
+	write(t, dir, "b.go", "package p\n\nfunc G() {}\n")
+	do(t, dir, "git", "add", ".")
+	do(t, dir, "git", "commit", "-q", "-m", "two\n\nChange-Id: Itwo\n")
+
+	one, err := r.Change("Ione")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oneSnaps, err := r.EnsureSnapshot(one)
+	if err != nil {
+		t.Fatal(err)
+	}
+	two, err := r.Change("Itwo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	twoSnaps, err := r.EnsureSnapshot(two)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A resolved thread, and two unresolved added in an order that would
+	// get the sort wrong if nothing were actually sorting them: the older
+	// one is added second and then backdated, since both would otherwise
+	// land in the same second.
+	resolved, err := r.DB.AddThread(oneSnaps[0].ID, "a.go", "new", 1, "package p", &Comment{
+		Author: "rsc", Body: "settled", Draft: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.DB.SetResolved(resolved.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	newer, err := r.DB.AddThread(twoSnaps[0].ID, "b.go", "new", 1, "package p", &Comment{
+		Author: "rsc", Body: "newer question", Draft: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	older, err := r.DB.AddThread(oneSnaps[0].ID, "a.go", "new", 3, "func F() {}", &Comment{
+		Author: "rsc", Body: "older question", Draft: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.DB.sql.Exec("UPDATE thread SET created = ? WHERE id = ?",
+		time.Now().Add(-time.Hour).Unix(), older.ID); err != nil {
+		t.Fatal(err)
+	}
+	_ = newer
+
+	body := mustGet(t, s, repoURL(t, r, ""))
+	if !strings.Contains(body, "<h2>Comments</h2>") {
+		t.Fatalf("no Comments section:\n%s", body)
+	}
+	if !strings.Contains(body, `id="tab-unresolved" class="tabradio" checked`) {
+		t.Error("the unresolved tab is not the default selection")
+	}
+
+	unresolvedPanel := body[strings.Index(body, `data-tab="unresolved"`):strings.Index(body, `data-tab="resolved"`)]
+	resolvedPanel := body[strings.Index(body, `data-tab="resolved"`):]
+
+	if strings.Contains(unresolvedPanel, "settled") {
+		t.Error("a resolved thread leaked into the unresolved panel")
+	}
+	if !strings.Contains(resolvedPanel, "settled") {
+		t.Error("the resolved thread is missing from the resolved panel")
+	}
+
+	ni, oi := strings.Index(unresolvedPanel, "newer question"), strings.Index(unresolvedPanel, "older question")
+	if ni < 0 || oi < 0 {
+		t.Fatalf("both unresolved threads should be in the unresolved panel:\n%s", unresolvedPanel)
+	}
+	if ni > oi {
+		t.Error("unresolved comments are not ordered newest to oldest")
+	}
+
+	for _, want := range []string{"one", "two"} {
+		if !strings.Contains(unresolvedPanel, want) {
+			t.Errorf("unresolved panel does not name change %q", want)
+		}
+	}
+}
+
+// TestCommentsTabsEmptyStates checks the placeholder text a tab shows when
+// its own list is empty, and that the whole section disappears when there
+// is nothing to show on either tab.
+func TestCommentsTabsEmptyStates(t *testing.T) {
+	r, dir := newReview(t)
+	s := newServer(r.DB, r.Root(), r.Pin)
+	write(t, dir, "a.go", "package p\n\nfunc F() {}\n")
+	do(t, dir, "git", "add", ".")
+	do(t, dir, "git", "commit", "-q", "-m", "one\n\nChange-Id: Ione\n")
+
+	// Nothing has been said yet: the section does not render at all.
+	body := mustGet(t, s, repoURL(t, r, "/c/Ione"))
+	if strings.Contains(body, "<h2>Comments</h2>") {
+		t.Error("Comments section rendered with nothing to show")
+	}
+
+	c, err := r.Change("Ione")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snaps, err := r.EnsureSnapshot(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	th, err := r.DB.AddThread(snaps[0].ID, "a.go", "new", 1, "package p", &Comment{
+		Author: "rsc", Body: "only comment", Draft: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// One unresolved thread: the resolved tab shows the placeholder.
+	body = mustGet(t, s, repoURL(t, r, "/c/Ione"))
+	if !strings.Contains(body, "No resolved comments.") {
+		t.Errorf("resolved tab missing its placeholder:\n%s", body)
+	}
+	if strings.Contains(body, "No unresolved comments") {
+		t.Error("unresolved tab shows its placeholder despite having a thread")
+	}
+
+	// Resolve it: the unresolved tab now shows the placeholder instead.
+	if err := r.DB.SetResolved(th.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	body = mustGet(t, s, repoURL(t, r, "/c/Ione"))
+	if !strings.Contains(body, "🎉 No unresolved comments!") {
+		t.Errorf("unresolved tab missing its placeholder:\n%s", body)
+	}
+	if strings.Contains(body, "No resolved comments.") {
+		t.Error("resolved tab shows its placeholder despite having a thread")
 	}
 }

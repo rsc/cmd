@@ -27,6 +27,7 @@
 	--token-highlighting-color: #fffd54;
 	--focused-line-outline-color: #1967d2;
 	--diff-blank-background-color: #f8f9fa;
+	--unresolved-comment-background-color: #fef7e0;
 
 	/* palette */
 	--gerrit-blue-light: #1565c0;
@@ -503,6 +504,10 @@ tr.threadrow td.threadcell {
 	margin-bottom: 6px;
 	max-width: 70em;
 }
+/* Gerrit's color for a thread still waiting on someone: unresolved is the
+ * state a reader is meant to notice. Resolved and stale below override it,
+ * since a thread cannot be both waiting and settled. */
+.thread:not(.resolved) { background: var(--unresolved-comment-background-color); }
 .thread.focused { border-color: var(--focused-line-outline-color); box-shadow: 0 0 0 1px var(--focused-line-outline-color); }
 .thread.resolved { background: var(--gray-50); }
 .thread.stale { border-left: 3px solid var(--orange-900); }
@@ -591,6 +596,32 @@ tr.threadrow td.threadcell {
  * and its location is a link back to the line it is attached to. */
 .history .thread { max-width: 60em; margin-bottom: 8px; }
 .history .thread .where { font-family: var(--font); font-size: 12px; }
+
+/* Resolved and unresolved comments, as two tabs. Pure CSS: a pair of
+ * hidden radio buttons and labels for them, with the panel each one
+ * shows picked by a sibling selector. Unresolved is checked by default,
+ * since that is the tab asking for something. */
+.tabs { max-width: 60em; }
+.tabs .tabradio { display: none; }
+.tablabels { display: flex; gap: 4px; border-bottom: var(--border); margin-bottom: 12px; }
+.tablabel {
+	padding: 6px 12px;
+	cursor: pointer;
+	color: var(--gray-700);
+	font-size: 13px;
+	border-bottom: 2px solid transparent;
+	margin-bottom: -1px;
+	user-select: none;
+}
+.tabpanel { display: none; }
+#tab-unresolved:checked ~ .tabpanel[data-tab="unresolved"],
+#tab-resolved:checked ~ .tabpanel[data-tab="resolved"] { display: block; }
+#tab-unresolved:checked ~ .tablabels label[for="tab-unresolved"],
+#tab-resolved:checked ~ .tablabels label[for="tab-resolved"] {
+	color: var(--gray-900);
+	font-weight: 500;
+	border-bottom-color: var(--gerrit-blue-light);
+}
 
 .stalebox {
 	border: 1px solid var(--diff-context-control-border-color);
