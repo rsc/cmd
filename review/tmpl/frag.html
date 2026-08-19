@@ -82,6 +82,31 @@
 {{end}}
 {{end}}
 
+{{define "commentstabs"}}
+<div class="tabs">
+  <input type="radio" name="commentstab" id="tab-unresolved" class="tabradio" checked>
+  <input type="radio" name="commentstab" id="tab-resolved" class="tabradio">
+  <div class="tablabels">
+    <label for="tab-unresolved" class="tablabel">{{.Unresolved}} unresolved</label>
+    <label for="tab-resolved" class="tablabel">{{.Resolved}} resolved</label>
+  </div>
+  <div class="tabpanel" data-tab="unresolved">
+    {{if .UnresolvedThreads}}
+      {{range .UnresolvedThreads}}{{template "thread" .}}{{end}}
+    {{else}}
+      <p class="empty">🎉 No unresolved comments!</p>
+    {{end}}
+  </div>
+  <div class="tabpanel" data-tab="resolved">
+    {{if .ResolvedThreads}}
+      {{range .ResolvedThreads}}{{template "thread" .}}{{end}}
+    {{else}}
+      <p class="empty">No resolved comments.</p>
+    {{end}}
+  </div>
+</div>
+{{end}}
+
 {{define "thread"}}
 <div class="thread{{if .Thread.Resolved}} resolved{{end}}{{if .Thread.Other}} other{{end}}{{if .Thread.Stale}} stale{{end}}"
      id="thread-{{.Thread.ID}}" data-thread="{{.Thread.ID}}">
@@ -90,6 +115,10 @@
     {{if .Thread.Stale}}<span class="chip stalechip" title="the line this was attached to is gone">stale</span>{{end}}
     {{if .Thread.Resolved}}<span class="chip done">resolved</span>{{end}}
     <span class="where">
+      {{if .ChangeSubject}}
+        {{if .ChangeURL}}<a href="{{.ChangeURL}}">{{.ChangeSubject}}</a>{{else}}{{.ChangeSubject}}{{end}}
+        ·
+      {{end}}
       {{if .Link}}<a href="{{.Link}}">{{.Thread.Where}}</a>{{else}}{{.Thread.Where}}{{end}}
     </span>
   </div>
@@ -148,6 +177,18 @@
     </form>
   </div>
 </div>
+{{end}}
+
+{{define "publishbutton"}}
+<span id="publishbutton" style="display:contents" hx-swap-oob="true">
+{{if .Drafts}}
+<form method="post" action="{{.RepoURL}}/publish">
+  <input type="hidden" name="key" value="{{.Key}}">
+  <input type="hidden" name="return" value="{{.SelfURL}}">
+  <button type="submit" class="primary" data-busy="Publishing…"{{if .Title}} title="{{.Title}}"{{end}}>Publish {{.Drafts}} Draft{{if ne .Drafts 1}}s{{end}}</button>
+</form>
+{{end}}
+</span>
 {{end}}
 
 {{define "lgtmbutton"}}
