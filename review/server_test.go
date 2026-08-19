@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -390,6 +391,85 @@ func TestReplyUpdatesPublishButtonOOB(t *testing.T) {
 	}
 	if !strings.Contains(body, "Publish 1 Draft") {
 		t.Errorf("out-of-band button does not report the new draft:\n%s", body)
+	}
+}
+
+// TestRepoWideReplyUpdatesPublishAllOOB checks that replying from the
+// repository page's own Comments section -- which can hold threads from
+// any change -- ships the repo-wide Publish All button out of band,
+// rather than a single change's Publish button. The two pages share the
+// same reply form and endpoint, so the server has to tell them apart by
+// where the request actually came from.
+func TestRepoWideReplyUpdatesPublishAllOOB(t *testing.T) {
+	s, r, _ := newTestServer(t)
+	mustGet(t, s, repoURL(t, r, "/c/Itest1")) // implicit snapshot 1
+
+	snaps, err := r.DB.Snapshots(r.Root(), "Itest1")
+	if err != nil || len(snaps) == 0 {
+		t.Fatal(err)
+	}
+	th, err := r.DB.AddThread(snaps[0].ID, "a.go", "new", 1, "package main", &Comment{
+		Author: "rsc", Body: "first", Draft: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	form := url.Values{"thread": {strconv.FormatInt(th.ID, 10)}, "body": {"a reply from the repo page"}}
+	req := httptest.NewRequest("POST", repoURL(t, r, "/f/comment"), strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Current-URL", "http://x"+repoURL(t, r, ""))
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("reply = %d: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `id="publishbutton"`) || !strings.Contains(body, `hx-swap-oob="true"`) {
+		t.Fatalf("reply response carries no out-of-band publish button:\n%s", body)
+	}
+	if !strings.Contains(body, "Publish All (1 Draft)") {
+		t.Errorf("out-of-band button is not the repo-wide one:\n%s", body)
+	}
+	if strings.Contains(body, `name="key"`) {
+		t.Errorf("repo-wide button names one change:\n%s", body)
+	}
+}
+
+// TestServerNoticesJJAddedLater checks that a repository opened as plain
+// git picks up jj once jj is initialized in it, rather than being stuck
+// with the backend it had the first time the server looked. It used to be
+// stuck: the *Review was cached forever on first open.
+func TestServerNoticesJJAddedLater(t *testing.T) {
+	if _, err := exec.LookPath("jj"); err != nil {
+		t.Skip("jj not found")
+	}
+	dir := newGitRepo(t)
+	db := newDB(t)
+	s := newServer(db, dir, true)
+	name, err := db.RepoName(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := s.review(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Repo.Kind() != "git" {
+		t.Fatalf("Kind = %q before jj is added, want git", r.Repo.Kind())
+	}
+
+	if _, err := run(dir, "jj", "git", "init", "--colocate", "."); err != nil {
+		t.Skipf("jj git init --colocate: %v", err)
+	}
+
+	r, err = s.review(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Repo.Kind() != "jj" {
+		t.Errorf("Kind = %q after jj git init --colocate, want jj", r.Repo.Kind())
 	}
 }
 
