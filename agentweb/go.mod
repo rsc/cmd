@@ -1,6 +1,6 @@
 module rsc.io/cmd/agentweb
 
-go 1.28
+go 1.26.0
 
 require rsc.io/markdown v0.0.0-20241212154241-6bf72452917f
 
