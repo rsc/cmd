@@ -1,0 +1,360 @@
+/* Styling for Markdown slide presentations (*-slide.md). */
+
+:root {
+	--slide-w: 1280px;
+	--slide-h: 720px;
+	--fg: #16181d;
+	--dim: #5b6270;
+	--accent: #2b62d9;
+	--rule: #d7dbe3;
+	--code-bg: #f2f4f8;
+	--bg: #ffffff;
+	--mat: #2a2d34;
+
+	/* The fonts used on research.swtch.com, as installed locally. */
+	--text-font: "Minion Pro", "Minion 3", Georgia, "Times New Roman", serif;
+	--code-font: "Source Code Pro", ui-monospace, Menlo, Consolas, monospace;
+
+	/* Colors for the presenter status bar, which is always yellow. */
+	--bar: #ffd84d;
+	--bar-fg: #26210f;
+	--bar-dim: #6b6038;
+	--late: #a3160c;
+	--ahead: #12662f;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--fg: #e8eaef;
+		--dim: #9aa2b1;
+		--accent: #86a8ff;
+		--rule: #3a3f4b;
+		--code-bg: #24272e;
+		--bg: #16181d;
+		--mat: #0b0c0f;
+	}
+}
+
+html, body {
+	margin: 0;
+	padding: 0;
+	height: 100%;
+	overflow: hidden;
+	background: var(--mat);
+	color: var(--fg);
+	font-family: var(--text-font);
+}
+
+/* Before the script runs, hide the raw Markdown rendering. */
+#deck { opacity: 0; }
+#deck.ready { opacity: 1; }
+
+.slide-wrap {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 100%;
+	visibility: hidden;
+}
+
+.slide-wrap.current { visibility: visible; }
+
+.slide {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	width: var(--slide-w);
+	height: var(--slide-h);
+	box-sizing: border-box;
+	padding: 56px 72px;
+	background: var(--bg);
+	color: var(--fg);
+	font-size: 32px;
+	line-height: 1.35;
+	overflow: hidden;
+	transform: translate(-50%, -50%) scale(var(--scale, 1));
+	box-shadow: 0 8px 40px rgba(0, 0, 0, .45);
+}
+
+/* The heading keeps its size; everything below it shrinks to fit. */
+.slide-content {
+	transform: scale(var(--fit, 1));
+	transform-origin: top left;
+	width: calc(100% / var(--fit, 1));
+}
+
+/* A slide holding only a heading is a title slide: big and centered. */
+.slide.title .slide-body {
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	text-align: center;
+	height: 100%;
+}
+
+.slide.title h1 {
+	font-size: 2em;
+	margin: 0 0 .2em 0;
+	border: none;
+	padding: 0;
+}
+
+/* A heading with no text ("#") starts a slide but takes up no room. */
+.slide h1.empty { display: none; }
+
+/* A heading-free slide holding only an image is all image,
+   on 50% gray to letterbox images that do not fill the slide. */
+.slide.image { padding: 0; background: #808080; }
+.slide.image .slide-body, .slide.image .slide-content { height: 100%; }
+.slide.image .slide-content { transform: none; width: 100%; }
+.slide.image .slide-content > * { margin: 0; height: 100%; }
+
+.slide.image img {
+	display: block;
+	width: 100%;
+	height: 100%;
+	max-width: none;
+	object-fit: contain;
+}
+
+.slide h1 {
+	font-size: 1.5em;
+	line-height: 1.15;
+	font-weight: 600;
+	margin: 0 0 .6em 0;
+	padding-bottom: .25em;
+	border-bottom: 2px solid var(--rule);
+}
+
+.slide h2 { font-size: 1.1em; margin: .8em 0 .3em; }
+.slide h3 { font-size: 1em; margin: .8em 0 .3em; }
+.slide p { margin: .5em 0; }
+.slide ul, .slide ol { margin: .4em 0; padding-left: 1.2em; }
+.slide li { margin: .3em 0; }
+.slide li > ul, .slide li > ol { margin: .2em 0; }
+.slide a { color: var(--accent); }
+.slide strong { font-weight: 600; }
+.slide img { max-width: 100%; }
+
+.slide code {
+	font-family: var(--code-font);
+	font-size: .85em;
+}
+
+.slide pre {
+	background: var(--code-bg);
+	border-radius: 8px;
+	padding: .7em 1em;
+	overflow: auto;
+	margin: .5em 0;
+	tab-size: 4;
+}
+
+.slide pre code {
+	background: none;
+	padding: 0;
+	font-size: .75em;
+	line-height: 1.4;
+}
+
+.slide blockquote {
+	margin: .5em 0;
+	padding-left: .8em;
+	border-left: 4px solid var(--rule);
+	color: var(--dim);
+}
+
+.slide table { border-collapse: collapse; margin: .5em 0; font-size: .85em; }
+.slide th, .slide td { border: 1px solid var(--rule); padding: .3em .6em; text-align: left; }
+.slide hr { border: none; border-top: 1px solid var(--rule); margin: .6em 0; }
+
+/* The presenter view's clock, talk timer, and schedule for this slide. */
+#status { display: none; }
+
+body.notes #status {
+	display: flex;
+	flex: none;
+	justify-content: center;
+	align-items: baseline;
+	gap: 28px;
+	padding: 8px 32px;
+	background: var(--bar);
+	color: var(--bar-dim);
+	font-family: var(--code-font);
+	font-size: 19px;
+}
+
+body.notes #status:empty { display: none; }
+#status #elapsed { font-size: 26px; color: var(--bar-fg); }
+#status #elapsed.late { color: var(--late); }
+#status #elapsed.ahead { color: var(--ahead); }
+#status span:empty { display: none; }
+
+/* Speaker notes: hidden except in the presenter view, where the
+   slide shrinks to a copy at the top and the notes fill the rest. */
+#notes { display: none; }
+
+body.notes {
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+}
+
+body.notes #deck {
+	flex: none;
+	position: relative;
+	width: calc(var(--slide-w) * var(--note, .3));
+	height: calc(var(--slide-h) * var(--note, .3));
+	margin: 16px auto;
+}
+
+body.notes .slide {
+	top: 0;
+	left: 0;
+	transform: scale(var(--note, .3));
+	transform-origin: top left;
+}
+
+body.notes #notes {
+	display: block;
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+	padding: 20px 32px;
+	border-top: 2px solid var(--rule);
+	background: var(--bg);
+	color: var(--fg);
+	font-size: 22px;
+	line-height: 1.4;
+}
+
+.slide-notes { display: none; }
+.slide-notes.current { display: block; }
+#notes p { margin: .5em 0; }
+#notes ul, #notes ol { margin: .4em 0; padding-left: 1.2em; }
+#notes a { color: var(--accent); }
+#notes code { font-family: var(--code-font); font-size: .9em; }
+
+#notes pre {
+	font-size: .8em;
+	background: var(--code-bg);
+	border-radius: 8px;
+	padding: .7em 1em;
+	overflow: auto;
+	tab-size: 4;
+}
+
+/* Slide number, bottom right of the viewport. */
+#pageno {
+	position: fixed;
+	right: 10px;
+	bottom: 6px;
+	font-size: 13px;
+	color: #8a8f9a;
+	font-variant-numeric: tabular-nums;
+	user-select: none;
+}
+
+/* Help overlay. */
+#help {
+	position: fixed;
+	left: 50%;
+	top: 50%;
+	transform: translate(-50%, -50%);
+	background: var(--bg);
+	color: var(--fg);
+	border-radius: 10px;
+	padding: 20px 28px;
+	font-size: 15px;
+	line-height: 1.9;
+	box-shadow: 0 8px 40px rgba(0, 0, 0, .5);
+	display: none;
+	z-index: 11;
+}
+
+body.help #help { display: block; }
+
+body.help::before {
+	content: "";
+	position: fixed;
+	inset: 0;
+	background: rgba(0, 0, 0, .35);
+	z-index: 10;
+}
+#help table { border-collapse: collapse; }
+#help td { padding: 0 10px 0 0; }
+#help kbd {
+	font-family: var(--code-font);
+	background: var(--code-bg);
+	border-radius: 4px;
+	padding: 1px 6px;
+}
+
+/* Transient message, bottom center. */
+#msg {
+	position: fixed;
+	left: 50%;
+	bottom: 36px;
+	transform: translateX(-50%);
+	background: var(--bg);
+	color: var(--fg);
+	border-radius: 8px;
+	padding: 10px 18px;
+	font-size: 18px;
+	box-shadow: 0 4px 20px rgba(0, 0, 0, .5);
+	display: none;
+	z-index: 12;
+}
+
+#msg.show { display: block; }
+
+/* Overview mode: every slide as a thumbnail. */
+body.overview { overflow: auto; }
+
+body.overview #deck {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 20px;
+	padding: 20px;
+	align-content: flex-start;
+}
+
+body.overview .slide-wrap {
+	position: relative;
+	visibility: visible;
+	width: calc(var(--slide-w) * var(--thumb));
+	height: calc(var(--slide-h) * var(--thumb));
+	cursor: pointer;
+	outline: 3px solid transparent;
+	border-radius: 4px;
+}
+
+body.overview .slide-wrap.current { outline-color: var(--accent); }
+
+body.overview .slide {
+	top: 0;
+	left: 0;
+	transform: scale(var(--thumb));
+	transform-origin: top left;
+	box-shadow: 0 2px 10px rgba(0, 0, 0, .4);
+}
+
+@media print {
+	@page { size: 1280px 720px; margin: 0; }
+	html, body { overflow: visible; background: #fff; }
+	.slide-wrap {
+		visibility: visible;
+		position: relative;
+		width: var(--slide-w);
+		height: var(--slide-h);
+		break-after: page;
+	}
+	.slide {
+		top: 0;
+		left: 0;
+		transform: none !important;
+		box-shadow: none;
+	}
+	#pageno, #help { display: none; }
+}
