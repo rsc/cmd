@@ -35,6 +35,8 @@ func (p *Part) KindName() string {
 		return "output"
 	case KindNote:
 		return "note"
+	case KindFile:
+		return "file"
 	}
 	return "unknown"
 }
@@ -296,6 +298,9 @@ details > summary {
 	overflow: auto;
 }
 .note { font-style: italic; font-size: 83%; color: #666; }
+/* A file the model showed the user, with whatever it said about it. */
+figure.sent { margin: 0.8em 0; text-align: center; }
+figure.sent figcaption { font-size: 83%; font-style: italic; color: #666; margin-top: 0.3em; }
 </style>
 </head>
 <body>
@@ -337,6 +342,10 @@ details > summary {
 <div class="command">{{.Text}}</div>
 {{- else if eq .KindName "output"}}
 <pre class="output">{{.Text}}</pre>
+{{- else if eq .KindName "file"}}
+<figure class="sent">{{template "images" .}}{{with .Text}}
+<figcaption>{{.}}</figcaption>{{end}}
+</figure>
 {{- else if eq .KindName "note"}}
 <div class="note">{{.Text}}</div>
 {{- else if eq .KindName "tool"}}

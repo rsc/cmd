@@ -41,7 +41,7 @@ func (m *Msg) Aside() bool {
 func aside(parts []*Part) bool {
 	for _, p := range parts {
 		switch p.Kind {
-		case KindText, KindCommand, KindThinking, KindTool:
+		case KindText, KindCommand, KindThinking, KindTool, KindFile:
 			return false
 		}
 	}
@@ -81,8 +81,8 @@ func onlySaid(msgs []*Msg) []*Msg {
 // Which fields are set depends on the [Kind].
 type Part struct {
 	Kind    Kind
-	Text    string   // KindText, KindThinking, KindCommand, KindNote
-	Images  []*Image // KindText, KindTool
+	Text    string   // KindText, KindThinking, KindCommand, KindNote, KindFile (the caption)
+	Images  []*Image // KindText, KindTool, KindFile
 	Tool    string   // KindTool: tool name
 	Args    []Arg    // KindTool: tool arguments
 	Result  string   // KindTool: what the tool printed
@@ -99,6 +99,7 @@ const (
 	KindCommand              // a slash command the user typed
 	KindOutput               // what a command printed, shown as it came
 	KindNote                 // an out-of-band note, like an interruption
+	KindFile                 // a file the model handed to the user
 )
 
 // An Arg is a single named argument to a tool call.

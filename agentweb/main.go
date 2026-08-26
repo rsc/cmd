@@ -26,6 +26,12 @@
 // By default the formatted conversation shows only what the user and the
 // model said to each other. The -a flag adds everything else the transcript
 // holds: the model's thinking, and the tool calls it made along the way.
+//
+// Images the model showed the user are part of what it said and appear
+// either way, written into the page as data: URLs. The transcript names
+// these files instead of holding them, so agentweb reads them back from
+// disk, and one written to a conversation's scratch directory is usually
+// gone by the time anyone looks. Nothing is shown in its place.
 package main
 
 import (

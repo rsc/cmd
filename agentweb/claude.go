@@ -7,11 +7,13 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"iter"
 	"log"
 	"maps"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -36,6 +38,12 @@ type claudeRec struct {
 	Message     *claudeMsg `json:"message"`
 	CustomTitle string     `json:"customTitle"`
 	AITitle     string     `json:"aiTitle"`
+
+	// ToolUseResult is what the harness, rather than the model, made of a
+	// tool's result. Most of it repeats what the tool_result block already
+	// says; agentweb reads it only for the files a tool handed to the user.
+	// It is not always an object, so it is decoded on demand.
+	ToolUseResult json.RawMessage `json:"toolUseResult"`
 }
 
 // A claudeMsg is the model message in a "user" or "assistant" record.
@@ -215,10 +223,23 @@ func claudeMessages(file string) ([]*Msg, error) {
 				parts = append(parts, p)
 			case "tool_result":
 				// The result belongs to the call, which is in an earlier message.
-				if p := tools[b.ToolUseID]; p != nil {
-					p.Result, p.Images = claudeResult(b.Content)
-					p.IsError = b.IsError
-					delete(tools, b.ToolUseID)
+				p := tools[b.ToolUseID]
+				if p == nil {
+					break
+				}
+				p.Result, p.Images = claudeResult(b.Content)
+				p.IsError = b.IsError
+				delete(tools, b.ToolUseID)
+				// A file the model handed to the user is not a detail of the
+				// call that delivered it; it is the model showing the user
+				// something, and belongs in the model's turn. That turn is
+				// the message just built: a record of results alone adds no
+				// parts of its own, so nothing has been started since.
+				n := len(msgs)
+				if n > 0 && msgs[n-1].Role == "assistant" {
+					if sent := claudeSent(rec.ToolUseResult); sent != nil {
+						msgs[n-1].Parts = append(msgs[n-1].Parts, sent)
+					}
 				}
 			case "image":
 				if b.Source != nil {
@@ -406,6 +427,65 @@ func claudeResult(body claudeBody) (string, []*Image) {
 		}
 	}
 	return text.String(), images
+}
+
+// maxImage is the largest image file agentweb will write into a page.
+const maxImage = 8 << 20
+
+// claudeSent returns a part showing the images a tool delivered to the user,
+// or nil if it delivered none. The transcript names these files rather than
+// holding them, so they have to be read back from disk, and often they are
+// gone: a conversation's scratch directory does not outlive it.
+func claudeSent(data []byte) *Part {
+	if len(data) == 0 || data[0] != '{' {
+		return nil
+	}
+	var sent struct {
+		Caption     string `json:"caption"`
+		Attachments []struct {
+			Path      string `json:"path"`
+			IsImage   bool   `json:"isImage"`
+			MediaType string `json:"media_type"`
+		} `json:"attachments"`
+	}
+	if json.Unmarshal(data, &sent) != nil {
+		return nil
+	}
+	var images []*Image
+	for _, a := range sent.Attachments {
+		// An SVG is recorded as not an image but says so in its media type.
+		if !a.IsImage && !strings.HasPrefix(a.MediaType, "image/") {
+			continue
+		}
+		if img := readImage(a.Path, a.MediaType); img != nil {
+			images = append(images, img)
+		}
+	}
+	if len(images) == 0 {
+		return nil
+	}
+	return &Part{Kind: KindFile, Text: strings.TrimSpace(sent.Caption), Images: images}
+}
+
+// readImage reads file for inlining into the page, or returns nil if it is
+// missing, too big to inline, or not an image after all.
+func readImage(file, mediaType string) *Image {
+	info, err := os.Stat(file)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > maxImage {
+		return nil
+	}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return nil
+	}
+	if mediaType == "" {
+		// Older transcripts say a file is an image but not what kind of one.
+		mediaType, _, _ = strings.Cut(http.DetectContentType(data), ";")
+	}
+	if !strings.HasPrefix(mediaType, "image/") {
+		return nil
+	}
+	return &Image{MediaType: mediaType, Data: base64.StdEncoding.EncodeToString(data)}
 }
 
 // claudeRecs returns an iterator over the records in a Claude Code transcript,

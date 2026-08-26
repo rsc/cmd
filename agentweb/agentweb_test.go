@@ -5,6 +5,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -413,6 +414,90 @@ func TestDropTag(t *testing.T) {
 	for _, tt := range tests {
 		if got := dropTag(tt.in, "x"); got != tt.want {
 			t.Errorf("dropTag(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+// sentTranscript is a transcript in which the model hands the user three
+// files: an image, an image the harness did not name a type for, and a file
+// that is not an image at all. The paths are filled in by the test, since
+// the transcript names the files rather than holding them.
+const sentTranscript = `
+{"type":"assistant","uuid":"a1","timestamp":"2026-01-02T03:04:05Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"SendUserFile","input":{"files":["%[1]s"]}}]}}
+{"type":"user","uuid":"u1","timestamp":"2026-01-02T03:04:06Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"3 files delivered to user."}]},"toolUseResult":{"caption":"Look at this.","attachments":[{"path":"%[1]s","isImage":true,"media_type":"image/png"},{"path":"%[2]s","isImage":true},{"path":"%[3]s","isImage":false,"media_type":"text/plain"}]}}
+{"type":"assistant","uuid":"a2","timestamp":"2026-01-02T03:04:07Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"t2","name":"SendUserFile","input":{"files":["/does/not/exist.png"]}}]}}
+{"type":"user","uuid":"u2","timestamp":"2026-01-02T03:04:08Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t2","content":"1 file delivered to user."}]},"toolUseResult":{"caption":"Gone.","attachments":[{"path":"/does/not/exist.png","isImage":true,"media_type":"image/png"}]}}
+`
+
+// pngData is a 1x1 PNG, for a test that needs a real image on disk.
+var pngData = "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+
+func TestClaudeSent(t *testing.T) {
+	dir := t.TempDir()
+	png := filepath.Join(dir, "shown.png")
+	sniff := filepath.Join(dir, "untyped")
+	text := filepath.Join(dir, "notes.txt")
+	for _, f := range []struct{ name, data string }{{png, pngData}, {sniff, pngData}, {text, "hello"}} {
+		if err := os.WriteFile(f.name, []byte(f.data), 0666); err != nil {
+			t.Fatal(err)
+		}
+	}
+	body := fmt.Sprintf(sentTranscript, png, sniff, text)
+	msgs, err := claudeMessages(writeFile(t, "c.jsonl", body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Both turns are the model's, so they merge, and the results add no
+	// messages of their own: the two calls, with the files that arrived
+	// shown just after the call that delivered them.
+	if len(msgs) != 1 {
+		t.Fatalf("claudeMessages returned %d messages, want 1", len(msgs))
+	}
+	parts := msgs[0].Parts
+	if len(parts) != 3 {
+		t.Fatalf("message has %d parts, want 3: %+v", len(parts), parts)
+	}
+	// The second delivery names a file that is not there, so it shows nothing.
+	if parts[0].Kind != KindTool || parts[2].Kind != KindTool {
+		t.Fatalf("parts = %+v, want the file between the two calls", parts)
+	}
+	p := parts[1]
+	if p.Kind != KindFile || p.Text != "Look at this." {
+		t.Fatalf("part = %+v, want the caption of the first delivery", p)
+	}
+	// The image, and the one whose type had to be sniffed. Not the text file.
+	if len(p.Images) != 2 {
+		t.Fatalf("part has %d images, want 2", len(p.Images))
+	}
+	for i, img := range p.Images {
+		if img.MediaType != "image/png" {
+			t.Errorf("image %d media type = %q, want image/png", i, img.MediaType)
+		}
+		if got := string(img.Src()); !strings.HasPrefix(got, "data:image/png;base64,iVBOR") {
+			t.Errorf("image %d src = %q, want an inline PNG", i, got)
+		}
+	}
+	// A file shown to the user is something the model said, not a detail of
+	// the call that carried it, so it survives with the thinking and the
+	// tool calls stripped away.
+	kept := onlySaid(msgs)
+	if len(kept) != 1 || len(kept[0].Parts) != 1 || kept[0].Parts[0] != p {
+		t.Errorf("onlySaid dropped the delivered file: %+v", kept)
+	}
+	if html := string(renderHTML(&Conv{ID: "x"}, kept)); !strings.Contains(html, "<figcaption>Look at this.</figcaption>") {
+		t.Errorf("rendered HTML is missing the caption")
+	}
+}
+
+func TestReadImage(t *testing.T) {
+	dir := t.TempDir()
+	big := filepath.Join(dir, "big.png")
+	if err := os.WriteFile(big, make([]byte, maxImage+1), 0666); err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range []string{big, dir, filepath.Join(dir, "missing.png")} {
+		if img := readImage(file, "image/png"); img != nil {
+			t.Errorf("readImage(%q) = %+v, want nil", file, img)
 		}
 	}
 }
