@@ -700,6 +700,12 @@
 				const hay = (row.dataset.filter || "").toLowerCase();
 				row.hidden = q !== "" && !hay.includes(q);
 			});
+			// The graph draws lines from a change to the change it sits on,
+			// which a filter can hide, so it stands aside until the list is
+			// whole again rather than pointing at rows that are not there.
+			document.querySelectorAll("table.withgraph").forEach(function (t) {
+				t.classList.toggle("filtered", q !== "");
+			});
 			cursor = -1;
 		});
 	}

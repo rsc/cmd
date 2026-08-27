@@ -19,16 +19,37 @@
     </div>
   </div>
 
-  {{if .MessageHead}}
-  <section class="commitmsg">
-    <pre>{{.MessageHead}}</pre>
-    {{if .MessageRest}}
-    <details>
-      <summary>{{.MoreLines}} more line{{if ne .MoreLines 1}}s{{end}}</summary>
-      <pre>{{.MessageRest}}</pre>
-    </details>
+  {{if or .MessageHead .Chain}}
+  <div class="msgrow">
+    {{if .MessageHead}}
+    <section class="commitmsg">
+      <pre>{{.MessageHead}}</pre>
+      {{if .MessageRest}}
+      <details>
+        <summary>{{.MoreLines}} more line{{if ne .MoreLines 1}}s{{end}}</summary>
+        <pre>{{.MessageRest}}</pre>
+      </details>
+      {{end}}
+    </section>
     {{end}}
-  </section>
+    {{if .Chain}}
+    <section class="relchain">
+      <h3>Relation chain</h3>
+      <ul>
+        {{range .Chain}}
+        <li class="{{if .Self}}sel{{end}}{{if not .Change}}joinrow{{end}}">
+          <span class="graphcell" style="width:{{.Width}}px">{{.Graph}}</span>
+          {{if .Change}}
+          <a href="{{.URL}}" title="{{.Subject}}">{{.Subject}}</a>
+          {{if and .Working (not .Current)}}<span class="chip working">uncommitted</span>{{end}}
+          {{if .Current}}<span class="chip current">working copy</span>{{end}}
+          {{end}}
+        </li>
+        {{end}}
+      </ul>
+    </section>
+    {{end}}
+  </div>
   {{end}}
 
   {{template "baseselect" .}}

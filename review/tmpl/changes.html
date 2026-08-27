@@ -16,12 +16,15 @@
     <p class="empty">Nothing to review: no mutable commits and no uncommitted changes.</p>
   {{end}}
 
-  <table class="changelist">
+  <table class="changelist withgraph">
     <tbody>
-      {{range .Changes}}
+      {{range .Rows}}
+      {{$row := .}}
+      {{with .Info}}
       <tr class="item" data-href="{{.URL}}" data-key="{{.Key}}"
           data-filter="{{.Subject}} {{.Author}} {{.ShortRev}}">
         <td class="pick">{{if not .Working}}<input type="checkbox" class="pickbox" aria-label="select">{{end}}</td>
+        <td class="graphcell" style="width:{{$row.Width}}px">{{$row.Graph}}</td>
         <td class="subject">
           <a href="{{.URL}}">{{.Subject}}</a>
           {{if and .Working (not .Current)}}<span class="chip working">uncommitted</span>{{end}}
@@ -41,6 +44,13 @@
         <td class="author">{{.Author}}</td>
         <td class="when" title="when the newest snapshot was taken">{{since .Updated}}</td>
       </tr>
+      {{else}}
+      <tr class="joinrow">
+        <td class="pick"></td>
+        <td class="graphcell" style="width:{{.Width}}px">{{.Graph}}</td>
+        <td colspan="6"></td>
+      </tr>
+      {{end}}
       {{end}}
     </tbody>
   </table>

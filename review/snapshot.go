@@ -48,6 +48,16 @@ func (r *Review) Change(key string) (*Change, error) {
 	return nil, fmt.Errorf("%q matches %d changes", key, len(match))
 }
 
+// Chain returns the relation chain of c: the stack it sits in, tip first.
+// See chain.
+func (r *Review) Chain(c *Change) ([]GraphRow, error) {
+	changes, err := r.Repo.Changes()
+	if err != nil {
+		return nil, err
+	}
+	return chain(changes, c), nil
+}
+
 func hasPrefix(s, prefix string) bool {
 	return len(prefix) > 0 && len(s) >= len(prefix) && s[:len(prefix)] == prefix
 }

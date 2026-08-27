@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 )
@@ -73,6 +74,220 @@ func shortRev(rev string) string {
 		return rev[:12]
 	}
 	return rev
+}
+
+// A GraphRow is one row of a list of changes drawn with a graph beside it:
+// a change, or, where Change is nil, a row of graph alone, joining a branch
+// back to the line below it.
+//
+// The row says what its graph holds, not how to draw it: which lanes it
+// passes through, and where its own node or corner sits. Drawing it is the
+// caller's business — see GraphRow.Graph.
+type GraphRow struct {
+	*Change
+
+	// Lanes reports, for each lane, whether a line runs the whole height of
+	// this row: a branch neither starting nor ending here, passing by. The
+	// row's own lane, Col, is never one of them.
+	Lanes []bool
+
+	// Col is the lane the row draws in: the change's node, or, on a join
+	// row, the lane the branch coming down Join joins into.
+	Col int
+
+	// Up and Down report that the change's own line carries on out of the
+	// row: up to what is sitting on it, down to what it sits on.
+	Up, Down bool
+
+	// Join, on a join row, is the lane whose line ends here, curving left
+	// into Col. It is -1 on a change's row.
+	Join int
+}
+
+// chain returns the changes connected to c by parent links: the stack c
+// sits in, whether above it, below it, or on a branch beside it, drawn as
+// graph rows in the order the change list already has them. It returns nil
+// when c is connected to nothing, since a chain of one is only the change
+// already on the screen.
+//
+// Only first parents are followed, so the chain is a tree. A merge in the
+// pending set therefore hangs off the side it was made from, which is also
+// the side its diff is against.
+func chain(changes []*Change, c *Change) []GraphRow {
+	byRev := make(map[string]*Change, len(changes))
+	for _, x := range changes {
+		byRev[x.Rev] = x
+	}
+	kids := make(map[string][]*Change)
+	for _, x := range changes {
+		if p := byRev[x.Parent]; p != nil {
+			kids[p.Rev] = append(kids[p.Rev], x)
+		}
+	}
+	if c = byRev[c.Rev]; c == nil {
+		return nil
+	}
+
+	// Walk out from c both ways: down to what it sits on, and up to
+	// everything sitting on it. What is reached is the whole stack, since
+	// the commit the stack was started on is not pending and so not here
+	// to connect one stack to the next.
+	in := make(map[string]bool)
+	var walk func(*Change)
+	walk = func(x *Change) {
+		if in[x.Rev] {
+			return
+		}
+		in[x.Rev] = true
+		if p := byRev[x.Parent]; p != nil {
+			walk(p)
+		}
+		for _, k := range kids[x.Rev] {
+			walk(k)
+		}
+	}
+	walk(c)
+	if len(in) < 2 {
+		return nil
+	}
+
+	var stack []*Change
+	for _, x := range changes {
+		if in[x.Rev] {
+			stack = append(stack, x)
+		}
+	}
+	return graph(stack)
+}
+
+// graph draws a set of changes as jj log draws one. Each line of
+// development holds a lane, a change is drawn on the lane waiting for it,
+// and where two lanes come to be waiting for the same change below they
+// join at once, in a row of their own, rather than running side by side
+// down to it.
+//
+// The changes keep the order they arrive in, which is the order the change
+// list shows them in: newest first. That order is already a valid one to
+// draw, since a change is always newer than the change it sits on — except
+// where a clock has lied, which topo puts right.
+func graph(changes []*Change) []GraphRow {
+	byRev := make(map[string]*Change, len(changes))
+	for _, x := range changes {
+		byRev[x.Rev] = x
+	}
+	parent := func(x *Change) string {
+		if p := byRev[x.Parent]; p != nil {
+			return p.Rev
+		}
+		return ""
+	}
+
+	var rows []GraphRow
+	var lanes []string // what each lane is waiting for; "" is free
+	for _, x := range topo(changes, parent) {
+		col := -1
+		for i, w := range lanes {
+			if w == x.Rev {
+				col = i
+				break
+			}
+		}
+		up := col >= 0
+		if !up {
+			// A branch nothing is waiting on yet: the tip of the chain, or
+			// of one of its branches. It starts a lane of its own.
+			col = slices.Index(lanes, "")
+			if col < 0 {
+				col = len(lanes)
+				lanes = append(lanes, "")
+			}
+		}
+		row := GraphRow{Change: x, Col: col, Up: up, Join: -1, Lanes: passing(lanes, col, -1)}
+		lanes[col] = parent(x)
+		row.Down = lanes[col] != ""
+		rows = append(rows, row)
+
+		// Nothing has two parents here, so at most one other lane can have
+		// come to be waiting for the same change as this one.
+		if lanes[col] != "" {
+			for i, w := range lanes {
+				if i != col && w == lanes[col] {
+					a, b := min(i, col), max(i, col)
+					rows = append(rows, GraphRow{Col: a, Join: b, Lanes: passing(lanes, a, b)})
+					lanes[b] = ""
+					break
+				}
+			}
+		}
+		for len(lanes) > 0 && lanes[len(lanes)-1] == "" {
+			lanes = lanes[:len(lanes)-1]
+		}
+	}
+
+	// Every row is given the same number of lanes, so that what is drawn
+	// beside the graph starts in the same place all the way down.
+	w := 0
+	for _, r := range rows {
+		w = max(w, len(r.Lanes), r.Col+1, r.Join+1)
+	}
+	for i, r := range rows {
+		rows[i].Lanes = append(r.Lanes, make([]bool, w-len(r.Lanes))...)
+	}
+	return rows
+}
+
+// topo returns the changes in an order the graph can be drawn in: every
+// change after everything sitting on it, so that a line always runs down
+// the page from a change to what it sits on.
+//
+// The order given is kept wherever it already satisfies that, which is
+// everywhere the commit times are honest, since a change is written after
+// the change it sits on. Where they are not — a clock set wrong, or a
+// commit date carried across a rebase — the change is held back until
+// what sits on it has been drawn, rather than left dangling.
+func topo(changes []*Change, parent func(*Change) string) []*Change {
+	kids := make(map[string]int)
+	for _, x := range changes {
+		if p := parent(x); p != "" {
+			kids[p]++
+		}
+	}
+	out := make([]*Change, 0, len(changes))
+	done := make(map[string]bool)
+	for len(out) < len(changes) {
+		n := len(out)
+		for _, x := range changes {
+			if done[x.Rev] || kids[x.Rev] > 0 {
+				continue
+			}
+			done[x.Rev] = true
+			out = append(out, x)
+			if p := parent(x); p != "" {
+				kids[p]--
+			}
+		}
+		// A cycle cannot happen in a commit graph, but a corrupt one must
+		// not spin here: draw what is left in the order it came in.
+		if len(out) == n {
+			for _, x := range changes {
+				if !done[x.Rev] {
+					out = append(out, x)
+				}
+			}
+			break
+		}
+	}
+	return out
+}
+
+// passing reports which lanes have a line running the whole height of a
+// row: every open lane except the one or two the row draws in itself.
+func passing(lanes []string, col, join int) []bool {
+	out := make([]bool, len(lanes))
+	for i, w := range lanes {
+		out[i] = w != "" && i != col && i != join
+	}
+	return out
 }
 
 // A File is one file changed by a change.

@@ -316,6 +316,106 @@ button.reviewed.lgtm.on:hover { background: var(--gerrit-blue-light); }
 }
 .commitmsg details[open] summary { margin-bottom: 6px; }
 
+/* The commit message and the relation chain sit side by side, as in
+   Gerrit: what this change says on the left, where it sits on the right. */
+.msgrow { display: flex; align-items: flex-start; gap: 12px; }
+.msgrow .commitmsg { flex: 1 1 auto; min-width: 0; }
+
+.relchain {
+	flex: 0 1 42%;
+	min-width: 0;
+	border: var(--border);
+	border-radius: 4px;
+	background: var(--gray-50);
+	padding: 10px 12px;
+	margin-bottom: 12px;
+}
+.relchain ul { list-style: none; margin: 0; padding: 0; }
+.relchain li {
+	position: relative;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-height: 20px;
+	padding: 0 4px 0 18px;
+	border-radius: 2px;
+}
+.relchain li a, .relchain li .chip { line-height: 16px; }
+.relchain li a {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.relchain li .graphcell { align-self: stretch; }
+/* The change being viewed keeps its place in the chain rather than being
+   dropped from it, marked by an arrow in a gutter every row leaves free,
+   so that marking it shifts nothing. */
+.relchain li.sel { background: var(--blue-50); }
+.relchain li.sel a { color: var(--gray-900); font-weight: 500; }
+.relchain li.sel::before {
+	content: "→";
+	position: absolute;
+	left: 2px;
+	color: var(--gray-700);
+}
+
+/* ---- the commit graph ---- */
+
+/* The graph is drawn beside a list of changes: a line down the page for
+   each line of development, a node where a change sits on one, and a
+   corner where one line joins another. It is drawn in boxes rather than
+   written in the box characters jj log uses, so that its lines run the
+   whole height of a row however tall the row turns out to be. */
+.graphcell {
+	position: relative;
+	flex: none;
+	padding: 0;
+	overflow: hidden;
+}
+.graphcell .line, .graphcell .corner, .graphcell .node {
+	position: absolute;
+	box-sizing: border-box;
+}
+.graphcell .line { top: 0; bottom: 0; background: var(--gray-500); }
+/* A node's own line stops at the edge of it: drawn through, it would show
+   inside a node that is not filled in. */
+.graphcell .line.up { bottom: calc(50% + 3px); }
+.graphcell .line.down { top: calc(50% + 3px); }
+/* A node is left hollow, so that whatever the row is sitting on shows
+   through it: the page, or the highlight under the row being viewed. */
+.graphcell .node {
+	top: 50%;
+	height: 7px;
+	margin-top: -3.5px;
+	border: 1px solid var(--gray-500);
+	border-radius: 50%;
+}
+/* The working copy is filled in, as jj marks it with @ rather than with
+   the ○ it gives every other commit. */
+.graphcell .node.wc { background: var(--gray-500); }
+/* Two sides of a box, with the turn between them rounded off: down the
+   right, round, and away to the left. */
+.graphcell .corner {
+	top: 0;
+	height: 50%;
+	background: none;
+	border-right: 1px solid var(--gray-500);
+	border-bottom: 1px solid var(--gray-500);
+	border-bottom-right-radius: 7px;
+}
+
+/* A join row carries nothing but graph, so it is only as tall as the turn
+   drawn in it needs. */
+.relchain li.joinrow { min-height: 14px; }
+tr.joinrow > td { height: 14px; padding: 0; border-bottom: none; }
+/* The lines have to reach the rows above and below, so the graph column
+   takes no padding and no rule of its own. */
+.changelist .graphcell { border-bottom: none; }
+/* Filtering hides rows, and the graph would then be drawing lines to
+   changes that are no longer there, so it stands aside until the list is
+   whole again. */
+.withgraph.filtered .graphcell, .withgraph.filtered tr.joinrow { display: none; }
+
 /* ---- base selector and snapshot timeline ---- */
 
 .baseselect {

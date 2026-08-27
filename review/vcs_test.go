@@ -5,6 +5,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -603,6 +604,144 @@ func TestJJCommitMsgParent(t *testing.T) {
 	}
 	if moved.Parent == top.Parent {
 		t.Errorf("after rebase Parent = %q, unchanged", moved.Parent)
+	}
+}
+
+// chainChanges builds a pending set from a list of "rev parent" pairs, in
+// the order a change list would put them: newest first. A third field, @,
+// marks the working copy.
+func chainChanges(pairs ...string) []*Change {
+	var changes []*Change
+	for _, p := range pairs {
+		f := strings.Fields(p)
+		c := &Change{Key: f[0], Rev: f[0], Parent: f[1], Subject: f[0]}
+		c.Current = len(f) > 2 && f[2] == "@"
+		changes = append(changes, c)
+	}
+	return changes
+}
+
+// chainDraw renders a chain in the characters jj log prints one in, so
+// that a test can say what it wants to see. The page draws the same rows
+// as lines instead; this is the same shape, in a form a test can read.
+func chainDraw(t *testing.T, entries []GraphRow) string {
+	var b strings.Builder
+	for _, e := range entries {
+		if len(e.Lanes) != len(entries[0].Lanes) {
+			t.Errorf("row %+v has %d lanes, want %d", e, len(e.Lanes), len(entries[0].Lanes))
+		}
+		row := make([]rune, 2*len(e.Lanes)-1)
+		for i := range row {
+			row[i] = ' '
+		}
+		for lane, on := range e.Lanes {
+			if on {
+				row[2*lane] = '│'
+			}
+		}
+		if e.Change != nil {
+			row[2*e.Col] = '○'
+			if e.Current || e.Working {
+				row[2*e.Col] = '@'
+			}
+		} else {
+			row[2*e.Col], row[2*e.Join] = '├', '╯'
+			for i := 2*e.Col + 1; i < 2*e.Join; i++ {
+				if row[i] == '│' {
+					row[i] = '┼'
+				} else {
+					row[i] = '─'
+				}
+			}
+		}
+		fmt.Fprintf(&b, "%s", strings.TrimRight(string(row), " "))
+		if e.Change != nil {
+			fmt.Fprintf(&b, " %s", e.Rev)
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+func TestChain(t *testing.T) {
+	// A stack of three on main, and a second stack beside it, which shares
+	// only the commit both were started on and so is a chain of its own.
+	stacks := chainChanges("c b", "b a", "a main", "z main")
+	// A fork: the working copy sits on the bottom change, not on the top.
+	forked := chainChanges("c b", "w b @", "b a", "a main")
+	// Two branches off one change, one of them carrying a stack of its own,
+	// which is the shape jj log draws with a join row per branch.
+	tree := chainChanges("e d", "d b", "c b", "b a", "z a", "a main")
+
+	for _, tt := range []struct {
+		name    string
+		changes []*Change
+		at      string
+		want    string
+	}{
+		{"tip", stacks, "c", "○ c\n○ b\n○ a\n"},
+		{"middle", stacks, "b", "○ c\n○ b\n○ a\n"},
+		{"bottom", stacks, "a", "○ c\n○ b\n○ a\n"},
+		{"beside", stacks, "z", ""},
+		{"alone", chainChanges("a main"), "a", ""},
+		{"forked", forked, "c", "○ c\n│ @ w\n├─╯\n○ b\n○ a\n"},
+		{"forked from below", forked, "a", "○ c\n│ @ w\n├─╯\n○ b\n○ a\n"},
+		{"tree", tree, "a", "○ e\n○ d\n│ ○ c\n├─╯\n○ b\n│ ○ z\n├─╯\n○ a\n"},
+		{"absent", stacks, "gone", ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := chainDraw(t, chain(tt.changes, &Change{Rev: tt.at}))
+			if got != tt.want {
+				t.Errorf("chain at %s:\n%s\nwant:\n%s", tt.at, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestGraph checks the whole pending set drawn as one graph, which is what
+// the change list shows. The changes keep the order they came in.
+func TestGraph(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		changes []*Change
+		want    string
+	}{
+		// Two stacks sharing only the commit they were both started on,
+		// which is not pending: nothing joins them, and the second reuses
+		// the lane the first has finished with.
+		{"two stacks", chainChanges("c b", "b a", "a main", "z main"), "○ c\n○ b\n○ a\n○ z\n"},
+		// A branch off the middle of a stack, listed newest first, joins
+		// the stack at the change it was branched from.
+		{"branch", chainChanges("c b", "w b", "b a", "a main"), "○ c\n│ ○ w\n├─╯\n○ b\n○ a\n"},
+		// A change listed before something sitting on it: a clock set
+		// wrong, or a date carried across a rebase. Drawing it in the
+		// order given would leave a line hanging off the bottom, so the
+		// change is held back until what sits on it has been drawn.
+		{"skewed clock", chainChanges("a main", "b a"), "○ b\n○ a\n"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := chainDraw(t, graph(tt.changes))
+			if got != tt.want {
+				t.Errorf("graph:\n%s\nwant:\n%s", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestChainEnds checks where a change's own line runs out of its row: a
+// line up to what is sitting on it, and down to what it sits on. The chain
+// stops at the change the stack was started on, which is not pending, so
+// the bottom row's line has nowhere below to go.
+func TestChainEnds(t *testing.T) {
+	rows := chain(chainChanges("c b", "b a", "a main"), &Change{Rev: "b"})
+	want := []struct{ up, down bool }{{false, true}, {true, true}, {true, false}}
+	if len(rows) != len(want) {
+		t.Fatalf("chain has %d rows, want %d", len(rows), len(want))
+	}
+	for i, w := range want {
+		if rows[i].Up != w.up || rows[i].Down != w.down {
+			t.Errorf("%s: Up, Down = %v, %v, want %v, %v", rows[i].Rev, rows[i].Up, rows[i].Down, w.up, w.down)
+		}
 	}
 }
 

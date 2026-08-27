@@ -412,9 +412,18 @@ type changeInfo struct {
 	URL        string
 }
 
+// changeRow is one row of the change list: a change, with where it sits in
+// the graph drawn beside it, or, where Info is nil, a row of graph alone,
+// joining one branch to another.
+type changeRow struct {
+	GraphRow
+	Info *changeInfo
+}
+
 type changesPage struct {
 	head
-	Changes           []*changeInfo
+	Rows              []*changeRow
+	Changes           int           // how many of Rows carry a change
 	Drafts            int           // unpublished comments anywhere in the repository
 	ResolvedThreads   []*threadFrag // resolved threads across every change, newest first
 	UnresolvedThreads []*threadFrag // unresolved threads across every change, newest first
@@ -435,8 +444,19 @@ func (s *server) changes(w http.ResponseWriter, req *http.Request, r *Review) er
 			return err
 		}
 		info.URL = s.filesURL(r, c.Key, "", "")
-		p.Changes = append(p.Changes, info)
 		byKey[c.Key] = info
+	}
+	// The list keeps the order the repository gave it — newest first — and
+	// the graph is drawn down the side of it, showing which change sits on
+	// which. Rows carrying no change of their own join one branch to
+	// another, and there is nothing to look up for them.
+	for _, g := range graph(changes) {
+		row := &changeRow{GraphRow: g}
+		if g.Change != nil {
+			row.Info = byKey[g.Key]
+			p.Changes++
+		}
+		p.Rows = append(p.Rows, row)
 	}
 	if p.Drafts, err = r.DB.DraftCount(r.Root()); err != nil {
 		return err
@@ -707,6 +727,72 @@ type nav struct {
 	FileRebaseOnly bool
 }
 
+// chainRow is one row of the relation chain shown beside the commit
+// message, with the link and the mark that the chain itself cannot supply.
+// A row drawing nothing but graph has neither, and no Change either.
+type chainRow struct {
+	GraphRow
+	URL  string
+	Self bool // this is the change being viewed
+}
+
+// Graph geometry, in pixels: how far apart the lanes are and where in a
+// lane its line runs. Everything else about the drawing — how thick a line
+// is, how big a node is, how tight a corner turns — is in the stylesheet,
+// under .graph.
+const (
+	laneW = 13
+	laneX = 6 // the line's own pixel, left of the lane's middle
+)
+
+// Width is how wide the row's graph is, in pixels. Every row of a graph
+// reports the same width, so that what is drawn beside it lines up.
+func (r *GraphRow) Width() int { return len(r.Lanes) * laneW }
+
+// Graph draws the row's piece of the graph: the lines of the branches
+// passing through it, and either the change's node, with as much of its
+// own line as reaches out of the row, or the corner where one branch comes
+// down and joins another.
+//
+// It is drawn in boxes rather than written in the box characters jj uses
+// so that the lines meet however tall the row turns out to be: characters
+// would want a grid whose height the font, not the page, decides.
+func (r *GraphRow) Graph() template.HTML {
+	var b strings.Builder
+	span := func(class string, x, w int) {
+		fmt.Fprintf(&b, `<span class="%s" style="left:%dpx;width:%dpx"></span>`, class, x, w)
+	}
+	for lane, on := range r.Lanes {
+		if on {
+			span("line", lane*laneW+laneX, 1)
+		}
+	}
+	switch {
+	case r.Change == nil:
+		// The lane joined into carries on down to the change both are
+		// waiting for; the one joining it ends here, curving into it. The
+		// corner is a box with two sides drawn and the join between them
+		// rounded off: down the right, round, and away to the left.
+		span("line", r.Col*laneW+laneX, 1)
+		span("corner", r.Col*laneW+laneX, (r.Join-r.Col)*laneW+1)
+	default:
+		if r.Up {
+			span("line up", r.Col*laneW+laneX, 1)
+		}
+		if r.Down {
+			span("line down", r.Col*laneW+laneX, 1)
+		}
+		// The working copy is filled in, as jj marks it with @ rather than
+		// with the ○ it gives every other commit.
+		class := "node"
+		if r.Current || r.Working {
+			class = "node wc"
+		}
+		span(class, r.Col*laneW+laneX-3, 7)
+	}
+	return template.HTML(b.String())
+}
+
 type filesPage struct {
 	head
 	*View
@@ -714,6 +800,7 @@ type filesPage struct {
 	MessageHead       string // the first messageLines lines of the commit message
 	MessageRest       string // the rest of it, empty when there is no more
 	MoreLines         int
+	Chain             []*chainRow // the stack this change sits in, tip first
 	Files             []*fileInfo
 	Reviewed          map[int64]bool // snapshots marked reviewed, by snapshot ID
 	LGTMs             map[int64]bool // snapshots marked LGTM, by snapshot ID
@@ -813,6 +900,21 @@ func (s *server) files(w http.ResponseWriter, req *http.Request, r *Review) erro
 	}
 	p.MessageHead, p.MessageRest, p.MoreLines = splitMessage(c.Message)
 	p.Drafts = countDrafts(threads)
+
+	// The stack the change sits in, so that moving up and down it does not
+	// mean going back to the change list to find where this one was.
+	entries, err := r.Chain(c)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		row := &chainRow{GraphRow: e}
+		if e.Change != nil {
+			row.URL = s.filesURL(r, e.Key, "", "")
+			row.Self = e.Key == c.Key
+		}
+		p.Chain = append(p.Chain, row)
+	}
 
 	// The tabs read newest first: whatever just happened is what is worth
 	// seeing without scrolling.
