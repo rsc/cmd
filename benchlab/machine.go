@@ -256,13 +256,68 @@ func (l *Lab) upload(m *machine, files []string) error {
 func (l *Lab) runRemote(m *machine, mode runMode, cmd ...string) (out string, err error) {
 	switch m.kind {
 	case "ssh":
-		// TODO quote cmd
-		cmd = stringList("ssh", m.name, cmd)
+		// ssh joins its arguments with spaces and hands the result to a
+		// shell on the remote system, so each argument must be quoted to
+		// survive that round trip. Without this, a -test.bench regexp
+		// containing shell metacharacters, as alternation and grouping do,
+		// is a syntax error on the far end.
+		cmd = stringList("ssh", m.name, shellQuote(cmd))
 	case "gomote":
-		// TODO quote cmd
+		// No quoting here: gomote run passes the command and its arguments
+		// to the buildlet as a list, without a shell in between.
 		cmd = stringList("gomote", "run", m.gomoteName, cmd)
 	}
 	return l.runLocal(mode, cmd...)
+}
+
+// shellQuote quotes each argument in cmd for interpretation by a POSIX shell,
+// as when passing a command to ssh.
+//
+// Arguments that a shell would leave alone are returned unchanged, so that
+// the commands benchlab ordinarily runs cross the wire byte for byte as they
+// did before. That matters for remote systems whose shell is not a POSIX one:
+// an ssh'able Windows machine, where benchlab runs "wmic cpu get NumberOfCores",
+// sees the same words either way.
+func shellQuote(cmd []string) []string {
+	out := make([]string, len(cmd))
+	for i, arg := range cmd {
+		out[i] = shellQuoteArg(arg)
+	}
+	return out
+}
+
+// shellQuoteArg quotes a single argument for a POSIX shell.
+func shellQuoteArg(arg string) string {
+	if shellSafe(arg) {
+		return arg
+	}
+	// Single quotes make the shell take everything literally.
+	// A single quote cannot appear inside them, so end the quoted run,
+	// write an escaped quote, and start a new one.
+	return "'" + strings.ReplaceAll(arg, "'", `'\''`) + "'"
+}
+
+// shellSafe reports whether arg means the same thing to a shell
+// quoted or not, so that it can be passed through untouched.
+func shellSafe(arg string) bool {
+	if arg == "" {
+		return false
+	}
+	for _, r := range arg {
+		switch {
+		case 'a' <= r && r <= 'z', 'A' <= r && r <= 'Z', '0' <= r && r <= '9':
+			continue
+		}
+		switch r {
+		// Note that '=' is safe, which keeps a leading KEY=value argument
+		// working as a shell variable assignment: quoting it would turn it
+		// into the name of a command instead.
+		case '@', '%', '+', '=', ':', ',', '.', '/', '-', '_':
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // A gomoter provides access to gomotes.
