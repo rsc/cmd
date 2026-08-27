@@ -465,6 +465,39 @@ func TestJJChanges(t *testing.T) {
 	}
 }
 
+// TestJJPendingAll checks that a repository defining pendingall() decides
+// for itself which commits are pending. jj-codereview defines it, and the
+// difference that shows is the copy of a commit that mailing it leaves
+// behind: without it, a mailed stack is listed twice over, each copy
+// carrying the change ID of the commit it was made from.
+func TestJJPendingAll(t *testing.T) {
+	dir := newJJRepo(t)
+	write(t, dir, "a.txt", "one\n")
+	do(t, dir, "jj", "describe", "-m", "first")
+	do(t, dir, "jj", "new", "-m", "second")
+	write(t, dir, "b.txt", "two\n")
+
+	// With no pendingall() defined, everything mutable is pending.
+	r, _ := OpenRepo(dir)
+	changes, err := r.Changes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 2 {
+		t.Fatalf("got %d changes, want 2: %+v", len(changes), changes)
+	}
+
+	// Defining it settles the question instead.
+	do(t, dir, "jj", "config", "set", "--repo", `revset-aliases."pendingall()"`, "mutable() ~ @")
+	changes, err = r.Changes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 || changes[0].Subject != "first" {
+		t.Fatalf("with pendingall() got %+v, want only the change it names", changes)
+	}
+}
+
 // TestJJChangeIDStable is the case git cannot handle without a Change-Id
 // trailer: rewriting the commit keeps the change ID, so comments stay put.
 func TestJJChangeIDStable(t *testing.T) {

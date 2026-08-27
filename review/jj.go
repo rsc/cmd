@@ -38,10 +38,38 @@ type jjRepo struct {
 func (r *jjRepo) Kind() string { return "jj" }
 func (r *jjRepo) Root() string { return r.root }
 
-// Changes returns the mutable commits, newest first. In jj the working copy
+// jjPendingAll is the revset naming the commits to review, where the
+// repository says what it means by pending. jj-codereview defines
+// pendingall(), and leaving the definition to it is what keeps the two
+// tools agreeing about what is under review.
+//
+// The difference that shows is the copy of each commit that mailing it
+// leaves behind, which jj-codereview keeps under a remote bookmark of its
+// own. A repository that lets those be rewritten keeps them inside
+// mutable(), where they arrive as a second copy of every mailed stack —
+// and, since a copy carries the change ID of the commit it was made from,
+// as the same change twice.
+const jjPendingAll = "pendingall()"
+
+// jjMutable is what to review in a repository that does not define
+// pendingall(): everything still open to being rewritten.
+const jjMutable = "mutable()"
+
+// pending returns the revset of the commits to review. Looking the alias
+// up in the configuration answers the question without touching the
+// repository, which asking for pendingall() and reading the failure would
+// not: in a large repository that costs more than everything else here.
+func (r *jjRepo) pending() string {
+	if _, err := run(r.root, "jj", "config", "get", `revset-aliases."pendingall()"`); err == nil {
+		return jjPendingAll
+	}
+	return jjMutable
+}
+
+// Changes returns the pending commits, newest first. In jj the working copy
 // is itself a commit, so uncommitted work appears here without a special case.
 func (r *jjRepo) Changes() ([]*Change, error) {
-	out, err := run(r.root, "jj", "log", "-r", "mutable()", "--no-graph", "-T", jjLogTemplate)
+	out, err := run(r.root, "jj", "log", "-r", r.pending(), "--no-graph", "-T", jjLogTemplate)
 	if err != nil {
 		return nil, err
 	}
