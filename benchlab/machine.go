@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -392,11 +393,19 @@ func (g *gomoter) scan(l *Lab, m *machine) error {
 	}
 	want := "gotip-" + m.name
 	wantLast := false
-	if m.name == "darwin-arm64" || m.name == "darwin-amd64" {
+	switch {
+	case m.name == "darwin-arm64" || m.name == "darwin-amd64":
 		// darwin gomotes end in _14, _15 etc for the darwin version.
 		// Take the last one in the list, which should be the biggest version.
 		want += "_"
 		wantLast = true
+
+	case m.name == "linux-amd64" && slices.Contains(g.kinds, want+"_avx512"):
+		// The plain gotip-linux-amd64 gomote is an older Xeon with no AVX-512,
+		// so code that uses it dies with SIGILL there instead of running
+		// slowly. Prefer the machine that can execute everything the compiler
+		// might emit; ask for gotip-linux-amd64 by name to get the other one.
+		want += "_avx512"
 	}
 	kind := ""
 	for _, k := range g.kinds {
