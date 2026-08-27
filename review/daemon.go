@@ -97,6 +97,9 @@ func startServer(db, addr string) (*serverState, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := os.MkdirAll(filepath.Dir(db), 0700); err != nil {
+		return nil, err
+	}
 	logFile, err := os.OpenFile(serverLog(db), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
 		return nil, err
