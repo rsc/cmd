@@ -20,11 +20,12 @@ import (
 
 // A Lab holds all the state for a benchmark evaluation.
 type Lab struct {
-	Commits  []string // -commit
-	Hosts    []string // -host
-	Reps     int      // -reps
-	Pkg      string   // -pkg
-	ForceRun bool     // -a
+	Commits    []string // -commit
+	Hosts      []string // -host
+	Reps       int      // -reps
+	Pkg        string   // -pkg
+	ForceRun   bool     // -a
+	RandLayout bool     // -randlayout
 
 	TestBench     string // -bench (for test binary -test.bench)
 	TestBenchtime string // -benchtime (for test binary -test.benchtime)
@@ -45,7 +46,9 @@ type Lab struct {
 	machines []*machine
 	builds   []*build
 
-	built map[commitBuild]*exe
+	// built holds the binaries for each commit and build configuration,
+	// one per linker layout seed. See Lab.layoutSeeds.
+	built map[commitBuild][]*exe
 }
 
 type fileSystem interface {
@@ -84,6 +87,7 @@ type commitBuild struct {
 type exe struct {
 	name string
 	id   string
+	seed int // linker layout seed, 0 for the linker's default layout
 }
 
 func (l *Lab) Init(flags *flag.FlagSet) {
@@ -91,6 +95,7 @@ func (l *Lab) Init(flags *flag.FlagSet) {
 		Commits:       []string{"HEAD^", "HEAD"},
 		Hosts:         []string{"local"},
 		Reps:          4,
+		RandLayout:    true,
 		TestBench:     ".",
 		TestBenchtime: "500ms",
 		TestCount:     5,
@@ -107,6 +112,7 @@ func (l *Lab) Init(flags *flag.FlagSet) {
 		flags.IntVar(&l.Reps, "reps", l.Reps, "run the benchmark program at each commit `R` times")
 		flags.StringVar(&l.Pkg, "pkg", "", "benchmark the package at the import `path`")
 		flags.BoolVar(&l.ForceRun, "a", false, "force rerun of all tests and benchmarks")
+		flags.BoolVar(&l.RandLayout, "randlayout", l.RandLayout, "build a separate binary per rep, each with a different linker layout")
 		flags.StringVar(&l.TestBench, "bench", l.TestBench, "run benchmarks with -bench=`pattern`")
 		flags.StringVar(&l.TestBenchtime, "benchtime", l.TestBenchtime, "run benchmarks with -benchtime=`d`")
 		flags.IntVar(&l.TestCPU, "cpu", l.TestCPU, "run benchmarks with -cpu=`n`")

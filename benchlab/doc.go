@@ -10,7 +10,7 @@ and presents the results.
 Usage:
 
 	benchlab [-commit=HEAD,HEAD^] [-host=local] \
-		[-pkg=.] [-reps=R] [-run=.] \
+		[-pkg=.] [-reps=R] [-run=.] [-randlayout=false] \
 		[-bench=.] [-benchtime=500ms] [-count=5] [-cpu=N] \
 
 Benchlab starts by building the test at the given list of commits
@@ -38,6 +38,35 @@ the default per-benchmark target time is 500ms (not 2s),
 and the default benchmark count is 5 (not 1).
 Along with the default -reps=4, this is a total of 20 samples
 for each benchmark on each host.
+
+By default, benchlab builds a separate test binary for each rep, passing the
+linker a different -randlayout seed each time, so that the reps for a commit
+run over several different function layouts. A benchmark's speed can depend on
+where the linker happened to place things: a hot loop can straddle a cache
+line, or two hot addresses can collide in a cache or a branch predictor. Held
+fixed, such an effect looks exactly like a real difference between two commits,
+and it can be large — tens of percent — perfectly repeatable, and present on
+one machine but not another. Varying the layout removes the bias: every commit
+is measured over the same set of layouts, so an unlucky one no longer lands on
+just one side of a comparison. The seeds are the rep numbers, so a given
+experiment still builds the same binaries every time and the cached results
+stay valid.
+
+Because the layouts are meant to be averaged over, benchlab passes
+-ignore=randlayout to benchstat. Note that the interval printed with each
+number is a confidence interval for the median, so a layout that is slow in a
+minority of the reps does not widen it. Benchlab therefore ends the report
+with a warning naming any benchmark whose median for a single seed is at
+least 10% away from its median across seeds. To inspect one layout, run
+benchstat by hand on the raw output file, which records the seed for every
+run as a randlayout configuration line. Progress logs name the binary each
+run used, so a surprising number can be traced back to the file in
+./.benchlab and disassembled.
+
+The -randlayout=false flag disables all of this, building one binary per commit
+as benchlab originally did. That is worth doing when the layout is what is
+under study, or when comparing against results measured before this behavior
+existed.
 
 When the -cpu flag is specified, it must be a single number, not a list.
 By default, benchlab only runs one benchmark at a time on each machine.
@@ -77,7 +106,7 @@ to the name restricts the choice to exactly that type.
 
 Other names are assumed to be valid systems accessible by “ssh” and “scp”.
 Binaries are copied to the default home directory on the system and
-are named benchlab.HASH.exe for some hexadecimal hash value.
+are named HASH.exe for some hexadecimal hash value.
 Benchlab deletes the test binaries when it finishes (TODO),
 but if benchlab is interrupted or crashes, it may leave them behind.
 To determine the operating system and architecture of the remote system,

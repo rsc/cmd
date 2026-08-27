@@ -15,6 +15,7 @@ import (
 	"maps"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -42,6 +43,11 @@ func (j *job) String() string {
 	} else {
 		name += fmt.Sprintf(" #%d", j.phase)
 	}
+	// Name the binary, so that a surprising result can be traced back to the
+	// exact file in .benchlab and disassembled.
+	if j.exe != nil {
+		name += " " + filepath.Base(j.exe.name)
+	}
 	return name
 }
 
@@ -53,11 +59,12 @@ type reporter struct {
 	jobsCached int
 	jobsDone   int
 	jobsTotal  int
-	rawFile    string         // path to benchmark output file
-	rawOut     io.WriteCloser // raw benchmark output
-	stats      string         // benchstat output
-	statFile   string         // path to benchstat output file
-	statCmd    []string       // command to refresh benchstat output
+	layouts    map[layoutKey]map[int][]float64 // ns/op samples by layout seed
+	rawFile    string                          // path to benchmark output file
+	rawOut     io.WriteCloser                  // raw benchmark output
+	stats      string                          // benchstat output
+	statFile   string                          // path to benchstat output file
+	statCmd    []string                        // command to refresh benchstat output
 }
 
 func joinQuoted(s []string) string {
@@ -101,8 +108,17 @@ func (l *Lab) runAll() error {
 	// TODO: Find highest priority axis with variation.
 	bcmd := []string{
 		"benchstat", "-alpha=0.001",
+		// benchstat's default row projection is .fullname, which keeps the
+		// -N GOMAXPROCS suffix on every benchmark name. Drop it: the host
+		// column already says which machine, and N follows from that.
+		"-row=.name",
 		fmt.Sprintf("-col=commit@(%s)", joinQuoted(l.Commits)),
 		fmt.Sprintf("-table=host@(%s)", joinQuoted(l.Hosts)),
+	}
+	if l.RandLayout {
+		// Pool the layouts instead of reporting each one separately:
+		// averaging over them is the entire point of varying them.
+		bcmd = append(bcmd, "-ignore=randlayout")
 	}
 	l.report.statCmd = append(bcmd, rawFile)
 
@@ -127,9 +143,15 @@ func (l *Lab) runAll() error {
 		id := 0
 		for _, commit := range l.Commits {
 			for _, h := range l.hosts {
-				prog := l.built[commitBuild{commit, h.build}]
-				if prog == nil {
+				exes := l.built[commitBuild{commit, h.build}]
+				if len(exes) == 0 {
 					return fmt.Errorf("missing exe for %s@%s", h.name, commit)
+				}
+				// Each rep runs a differently laid out binary; the tests,
+				// which only need to pass, run the first one.
+				prog := exes[0]
+				if phase > 0 {
+					prog = exes[(phase-1)%len(exes)]
 				}
 				j := &job{
 					commit: commit,
@@ -257,7 +279,19 @@ func (r *reporter) start(l *Lab) {
 }
 
 func (r *reporter) done(l *Lab, j *job) {
-	fmt.Fprintf(r.rawOut, "# %s\n\nhost: %s\ncommit: %s\n\n%s\n", j, j.host.name, j.commit, j.out)
+	// Hold the lock for the raw output too: jobs on different machines
+	// finish concurrently, and their blocks must not interleave.
+	r.mu.Lock()
+	fmt.Fprintf(r.rawOut, "# %s\n\nhost: %s\ncommit: %s\n", j, j.host.name, j.commit)
+	if j.exe != nil && j.exe.seed != 0 {
+		fmt.Fprintf(r.rawOut, "randlayout: %d\n", j.exe.seed)
+	}
+	fmt.Fprintf(r.rawOut, "\n%s\n", j.out)
+	r.recordLayout(j)
+	r.mu.Unlock()
+
+	// Cached runs are reported before r.start, when there is nothing to
+	// update yet. Their samples are recorded above all the same.
 	if r.started.IsZero() {
 		return
 	}
@@ -268,6 +302,145 @@ func (r *reporter) done(l *Lab, j *job) {
 	r.writeStat(l)
 
 	l.log.Printf("[%d/%d %v] %s done", r.jobsDone, r.jobsTotal, time.Since(r.started).Round(time.Second), j)
+}
+
+// A layoutKey identifies one benchmark's samples on one host at one commit.
+type layoutKey struct {
+	host   string
+	commit string
+	bench  string
+}
+
+// layoutSensitive is how far one layout's median must sit from the median
+// across all layouts before the report calls the benchmark out.
+const layoutSensitive = 0.10
+
+// recordLayout files j's benchmark results under the layout seed that produced
+// them, so that layoutNotes can tell a benchmark whose speed depends on the
+// linker's layout from one whose speed does not.
+// r.mu must be held.
+func (r *reporter) recordLayout(j *job) {
+	if j.exe == nil || j.exe.seed == 0 || !j.success {
+		return
+	}
+	for line := range strings.Lines(j.out) {
+		name, ns, ok := benchNsPerOp(line)
+		if !ok {
+			continue
+		}
+		if r.layouts == nil {
+			r.layouts = make(map[layoutKey]map[int][]float64)
+		}
+		k := layoutKey{j.host.name, j.commit, name}
+		if r.layouts[k] == nil {
+			r.layouts[k] = make(map[int][]float64)
+		}
+		r.layouts[k][j.exe.seed] = append(r.layouts[k][j.exe.seed], ns)
+	}
+}
+
+// benchNsPerOp parses a testing benchmark result line, returning the benchmark
+// name and its ns/op value. The name drops both the "Benchmark" prefix and the
+// trailing -N GOMAXPROCS suffix, to match the names benchstat prints.
+func benchNsPerOp(line string) (name string, ns float64, ok bool) {
+	f := strings.Fields(line)
+	if len(f) < 4 || !strings.HasPrefix(f[0], "Benchmark") {
+		return "", 0, false
+	}
+	// Fields after the iteration count are value/unit pairs.
+	for i := 2; i+1 < len(f); i += 2 {
+		if f[i+1] == "ns/op" {
+			v, err := strconv.ParseFloat(f[i], 64)
+			if err != nil {
+				return "", 0, false
+			}
+			return benchName(f[0]), v, true
+		}
+	}
+	return "", 0, false
+}
+
+// benchName trims a benchmark's "Benchmark" prefix and -N GOMAXPROCS suffix.
+func benchName(name string) string {
+	name = strings.TrimPrefix(name, "Benchmark")
+	if i := strings.LastIndex(name, "-"); i > 0 {
+		if n := name[i+1:]; n != "" && strings.Trim(n, "0123456789") == "" {
+			name = name[:i]
+		}
+	}
+	return name
+}
+
+// layoutNotes returns a footnote naming the benchmarks whose speed depends on
+// which linker layout they were built with: those where some seed's median sits
+// more than layoutSensitive away from the median across all seeds.
+//
+// Pooling the layouts keeps the comparison between commits honest, because
+// every commit is measured over the same set of seeds. But the interval printed
+// with each number is a confidence interval for the median, and a layout that
+// is slow in a minority of runs does not move the median at all, so the table
+// above gives no hint that the benchmark is sensitive. Hence this note.
+func (r *reporter) layoutNotes() string {
+	type note struct {
+		key   layoutKey
+		seed  int
+		frac  float64
+		seeds int
+	}
+	var notes []note
+	for k, bySeed := range r.layouts {
+		if len(bySeed) < 2 {
+			continue
+		}
+		var all []float64
+		for _, vs := range bySeed {
+			all = append(all, vs...)
+		}
+		pooled := median(all)
+		if pooled == 0 {
+			continue
+		}
+		for seed, vs := range bySeed {
+			if frac := median(vs)/pooled - 1; frac >= layoutSensitive || frac <= -layoutSensitive {
+				notes = append(notes, note{k, seed, frac, len(bySeed)})
+			}
+		}
+	}
+	if len(notes) == 0 {
+		return ""
+	}
+	slices.SortFunc(notes, func(a, b note) int {
+		if c := strings.Compare(a.key.host, b.key.host); c != 0 {
+			return c
+		}
+		if c := strings.Compare(a.key.commit, b.key.commit); c != 0 {
+			return c
+		}
+		if c := strings.Compare(a.key.bench, b.key.bench); c != 0 {
+			return c
+		}
+		return a.seed - b.seed
+	})
+
+	var buf strings.Builder
+	fmt.Fprintf(&buf, "\nWarning: layout-sensitive benchmarks detected:\n\n")
+	for _, n := range notes {
+		fmt.Fprintf(&buf, "* %s %s %s: seed %d %+.0f%% (of %d seeds)\n",
+			n.key.host, n.key.commit, n.key.bench, n.seed, 100*n.frac, n.seeds)
+	}
+	return buf.String()
+}
+
+// median returns the median of xs, or 0 if xs is empty.
+func median(xs []float64) float64 {
+	s := slices.Sorted(slices.Values(xs))
+	if len(s) == 0 {
+		return 0
+	}
+	if len(s)%2 == 1 {
+		return s[len(s)/2]
+	}
+	return (s[len(s)/2-1] + s[len(s)/2]) / 2
 }
 
 func (r *reporter) writeStat(l *Lab) {
@@ -295,6 +468,7 @@ func (r *reporter) writeStat(l *Lab) {
 	// Write benchstat file.
 	// Remove before WriteFile makes tail -F see the file as worth reprinting anew.
 	data := fmt.Appendf(nil, "# %s\n\n%s", strings.Join(r.statCmd, " "), r.stats)
+	data = append(data, r.layoutNotes()...)
 	l.fs.Remove(r.statFile)
 	if err := l.fs.WriteFile(r.statFile, data, 0666); err != nil {
 		l.log.Print(err)

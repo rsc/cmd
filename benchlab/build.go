@@ -41,18 +41,18 @@ func (l *Lab) build() error {
 	}()
 
 	var mu sync.Mutex
-	l.built = make(map[commitBuild]*exe)
+	l.built = make(map[commitBuild][]*exe)
 	for _, commit := range l.Commits {
 		if err := l.gitCheckout(commit); err != nil {
 			return err
 		}
 		err := parDo(l, l.builds, func(b *build) error {
-			exe, err := l.buildAt(commit, b)
+			exes, err := l.buildAt(commit, b)
 			if err != nil {
 				return err
 			}
 			mu.Lock()
-			l.built[commitBuild{commit, b}] = exe
+			l.built[commitBuild{commit, b}] = exes
 			mu.Unlock()
 			return nil
 		})
@@ -63,14 +63,58 @@ func (l *Lab) build() error {
 	return nil
 }
 
-func (l *Lab) buildAt(commit string, b *build) (*exe, error) {
-	name := ".benchlab/benchlab." + hash(commit, b.goos, b.goarch, b.env, b.flags) + ".exe"
+// layoutSeeds returns the linker layout seeds to build for each commit.
+// The seed 0 means the linker's default layout, without randomization.
+//
+// With randomization enabled there is one seed per rep, so that a benchmark
+// runs on a differently laid out binary each time. A score that depends on
+// where the linker happened to put things—a hot loop straddling a cache line,
+// two hot addresses colliding in a predictor—then varies from rep to rep
+// within a commit instead of masquerading as a difference between commits.
+// Such an effect can be large: a 40% swing in one accumulate benchmark, on
+// one machine, with identical instructions at identical alignment, is what
+// prompted this.
+func (l *Lab) layoutSeeds() []int {
+	if !l.RandLayout {
+		return []int{0}
+	}
+	seeds := make([]int, max(1, l.Reps))
+	for i := range seeds {
+		seeds[i] = i + 1
+	}
+	return seeds
+}
+
+// buildAt builds the test binaries for commit using build configuration b,
+// one for each seed returned by layoutSeeds.
+func (l *Lab) buildAt(commit string, b *build) ([]*exe, error) {
+	var exes []*exe
+	for _, seed := range l.layoutSeeds() {
+		e, err := l.buildOne(commit, b, seed)
+		if err != nil {
+			return nil, err
+		}
+		exes = append(exes, e)
+	}
+	return exes, nil
+}
+
+// buildOne builds a single test binary, laid out using the given seed.
+func (l *Lab) buildOne(commit string, b *build, seed int) (*exe, error) {
+	flags := b.flags
+	if seed != 0 {
+		flags = withRandLayout(flags, seed)
+	}
+
+	// The seed reaches the name through flags, so each layout gets its own
+	// binary, and an unrandomized build keeps the name it had before.
+	name := ".benchlab/" + hash(commit, b.goos, b.goarch, b.env, flags) + ".exe"
 
 	// Build binary.
 	cmd := []string{"GOOS=" + b.goos, "GOARCH=" + b.goarch}
 	cmd = append(cmd, b.env...)
 	cmd = append(cmd, "go", "test", "-c", "-o", name)
-	cmd = append(cmd, b.flags...)
+	cmd = append(cmd, flags...)
 	if l.Pkg != "" {
 		cmd = append(cmd, l.Pkg)
 	}
@@ -85,5 +129,20 @@ func (l *Lab) buildAt(commit string, b *build) (*exe, error) {
 	}
 	id = hash(id) // id is too long and has slashes
 
-	return &exe{name: name, id: id}, nil
+	return &exe{name: name, id: id, seed: seed}, nil
+}
+
+// withRandLayout returns flags with the linker's -randlayout=seed added.
+// A host configuration can set its own linker flags, as in
+// “local:ldflags=-w”, so merge into that setting rather than replacing it.
+func withRandLayout(flags []string, seed int) []string {
+	randlayout := fmt.Sprintf("-randlayout=%d", seed)
+	out := append([]string(nil), flags...)
+	for i, f := range out {
+		if arg, ok := strings.CutPrefix(f, "-ldflags="); ok {
+			out[i] = "-ldflags=" + arg + " " + randlayout
+			return out
+		}
+	}
+	return append(out, "-ldflags="+randlayout)
 }
