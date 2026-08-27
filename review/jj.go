@@ -21,6 +21,7 @@ const jjLogTemplate = `change_id ++ "\0" ++ commit_id ++ "\0" ++ ` +
 	`author.name() ++ " <" ++ author.email() ++ ">" ++ "\0" ++ ` +
 	`author.timestamp().format("%s") ++ "\0" ++ ` +
 	`if(current_working_copy, "1", "0") ++ "\0" ++ ` +
+	`if(empty, "1", "0") ++ "\0" ++ ` +
 	`description ++ "\x01"`
 
 // jjDiffTemplate reports each changed file as a status character and the
@@ -68,8 +69,8 @@ func (r *jjRepo) Commit(rev string) (*Change, error) {
 }
 
 func parseJJCommit(rec string) (*Change, error) {
-	f := strings.SplitN(rec, "\x00", 8)
-	if len(f) != 8 {
+	f := strings.SplitN(rec, "\x00", 9)
+	if len(f) != 9 {
 		return nil, fmt.Errorf("malformed jj log record %q", rec)
 	}
 	parent := zeroID
@@ -84,7 +85,9 @@ func parseJJCommit(rec string) (*Change, error) {
 	if err != nil {
 		return nil, fmt.Errorf("malformed jj log date %q", f[5])
 	}
-	msg := f[7]
+	current := f[6] == "1"
+	empty := f[7] == "1"
+	msg := f[8]
 	return &Change{
 		// jj change IDs are stable across amends by construction, which
 		// is exactly the identity comments need.
@@ -96,7 +99,13 @@ func parseJJCommit(rec string) (*Change, error) {
 		Message:   msg,
 		Author:    f[4],
 		Date:      time.Unix(sec, 0),
-		Current:   f[6] == "1",
+		Current:   current,
+		// The working-copy commit before it has any content or description
+		// of its own is not a change yet — it is where jj puts you between
+		// commands, and jj replaces it the moment you move on, abandoning it
+		// if nothing was ever recorded there. Snapshotting it would just
+		// leave a stranded row behind once jj does that.
+		Working: current && empty && strings.TrimSpace(msg) == "",
 	}, nil
 }
 

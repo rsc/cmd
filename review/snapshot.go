@@ -235,8 +235,10 @@ func (r *Review) View(c *Change, base, target string) (*View, error) {
 
 	switch {
 	case c.Working:
-		// The working tree is not snapshotted; it is always itself.
-		v.TargetRev = WorkingRev
+		// Not snapshotted; shown live as it stands right now. In git that
+		// is the sentinel WorkingRev, read off disk; in jj it is the empty
+		// commit's own hash, already valid to diff and read content from.
+		v.TargetRev = c.Rev
 		v.BaseRev = c.Parent
 	default:
 		if len(snaps) == 0 {

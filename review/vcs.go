@@ -50,8 +50,14 @@ type Change struct {
 	Message string    // full commit message
 	Author  string    // "Name <email>"
 	Date    time.Time // author date
-	Working bool      // uncommitted working tree, which cannot be snapshotted
-	Current bool      // jj's working-copy commit, @
+	// Working reports that this change has nothing of its own yet to
+	// snapshot: git's synthetic uncommitted-working-tree change, or jj's
+	// working-copy commit while it is still empty and undescribed — the
+	// state jj itself treats as disposable, replacing it the moment real
+	// work starts. Neither is durable enough to record a snapshot of.
+	Working bool
+
+	Current bool // jj's working-copy commit, @
 }
 
 // ShortRev returns an abbreviated form of c.Rev for display.
