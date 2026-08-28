@@ -191,7 +191,10 @@ table.changelist, table.filelist {
 	width: 100%;
 	border-collapse: collapse;
 }
-table.changelist td, table.filelist td {
+/* Rows of the list itself, not of anything nested inside one: a diff
+   expanded inline sits in a table of its own, whose every line would
+   otherwise be ruled off like a row of the list. */
+table.changelist > tbody > tr > td, table.filelist > tbody > tr > td {
 	padding: 6px 8px;
 	border-bottom: var(--border);
 	vertical-align: top;
