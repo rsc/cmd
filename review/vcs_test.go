@@ -527,8 +527,12 @@ func TestJJPendingAll(t *testing.T) {
 		t.Fatalf("got %d changes, want 2: %+v", len(changes), changes)
 	}
 
-	// Defining it settles the question instead.
+	// Defining it settles the question instead. Which revset to use is read
+	// once per repository, since it is a question about the configuration,
+	// so this asks a freshly opened one — which is what the next command or
+	// the next request would be.
 	do(t, dir, "jj", "config", "set", "--repo", `revset-aliases."pendingall()"`, "mutable() ~ @")
+	r, _ = OpenRepo(dir)
 	changes, err = r.Changes()
 	if err != nil {
 		t.Fatal(err)

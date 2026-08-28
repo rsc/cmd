@@ -8,6 +8,8 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"log"
+	"os"
 	"os/exec"
 	"slices"
 	"strings"
@@ -576,6 +578,17 @@ func subject(msg string) string {
 
 // run runs a command in dir and returns its standard output.
 func run(dir string, args ...string) ([]byte, error) {
+	// Nearly all of the time a page takes is spent in these commands, and
+	// which ones they are depends on the repository and on the change
+	// being looked at. Setting REVIEW_TRACE writes each one and what it
+	// cost to the server log, which is how to answer "why is this slow
+	// here" without guessing.
+	if os.Getenv("REVIEW_TRACE") != "" {
+		start := time.Now()
+		defer func() {
+			log.Printf("%6.0fms %s", time.Since(start).Seconds()*1000, strings.Join(args, " "))
+		}()
+	}
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Dir = dir
 	var stderr bytes.Buffer

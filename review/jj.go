@@ -35,6 +35,11 @@ const jjDiffTemplate = `self.status_char() ++ "\0" ++ ` +
 type jjRepo struct {
 	root string
 
+	// Which revset says what is pending, read once: it is a question about
+	// the configuration, and the configuration does not change under us.
+	pendingOnce   sync.Once
+	pendingRevset string
+
 	// The Gerrit changes the repository's commits have been uploaded as,
 	// read once and kept: a page draws many changes and they all want the
 	// same answer. See cls.
@@ -68,10 +73,13 @@ const jjMutable = "mutable()"
 // repository, which asking for pendingall() and reading the failure would
 // not: in a large repository that costs more than everything else here.
 func (r *jjRepo) pending() string {
-	if _, err := run(r.root, "jj", "config", "get", `revset-aliases."pendingall()"`); err == nil {
-		return jjPendingAll
-	}
-	return jjMutable
+	r.pendingOnce.Do(func() {
+		r.pendingRevset = jjMutable
+		if _, err := run(r.root, "jj", "config", "get", `revset-aliases."pendingall()"`); err == nil {
+			r.pendingRevset = jjPendingAll
+		}
+	})
+	return r.pendingRevset
 }
 
 // Changes returns the pending commits, newest first. In jj the working copy

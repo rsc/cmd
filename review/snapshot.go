@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // A Review pairs a repository with the database holding its comments.
@@ -25,11 +26,21 @@ func (r *Review) Root() string { return r.Repo.Root() }
 
 // Change returns the change with the given key, which may be a change key,
 // a commit ID, or a unique prefix of either.
+//
+// Reading what is pending means running the repository's own log command,
+// which in a large repository is among the slowest things here. A caller
+// that wants the changes for something else as well reads them once and
+// calls changeIn.
 func (r *Review) Change(key string) (*Change, error) {
 	changes, err := r.Repo.Changes()
 	if err != nil {
 		return nil, err
 	}
+	return changeIn(changes, key)
+}
+
+// changeIn returns the change with the given key from a list already read.
+func changeIn(changes []*Change, key string) (*Change, error) {
 	var match []*Change
 	for _, c := range changes {
 		switch {
@@ -46,16 +57,6 @@ func (r *Review) Change(key string) (*Change, error) {
 		return match[0], nil
 	}
 	return nil, fmt.Errorf("%q matches %d changes", key, len(match))
-}
-
-// Chain returns the relation chain of c: the stack it sits in, tip first.
-// See chain.
-func (r *Review) Chain(c *Change) ([]GraphRow, error) {
-	changes, err := r.Repo.Changes()
-	if err != nil {
-		return nil, err
-	}
-	return chain(changes, c), nil
 }
 
 func hasPrefix(s, prefix string) bool {
@@ -691,8 +692,14 @@ func (r *Review) FileStats(v *View) (map[string]FileStat, error) {
 		}
 	}
 
-	out := make(map[string]FileStat, len(v.Files))
-	for _, f := range v.Files {
+	// Measuring a file means reading both sides of it out of the
+	// repository, which is a command apiece and, in a large repository,
+	// most of what drawing this page costs. The files have nothing to say
+	// to one another, so they are read together rather than in turn.
+	stats := make([]*FileStat, len(v.Files))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, statReaders)
+	for i, f := range v.Files {
 		// A file with no status is not in the diff at all; it is listed for
 		// its comments, and has nothing to count.
 		if f.Status == 0 {
@@ -704,33 +711,56 @@ func (r *Review) FileStats(v *View) (map[string]FileStat, error) {
 		touches := !rebased || f.Path == CommitMsgFile ||
 			own[f.Path] || (f.OldPath != "" && own[f.OldPath])
 		if !touches {
-			out[f.Path] = FileStat{RebaseOnly: true}
+			stats[i] = &FileStat{RebaseOnly: true}
 			continue
 		}
-		old, new, err := r.Contents(v, f)
-		if err != nil {
-			continue
-		}
-		rows := Diff(old, new).Rows
-		if rebased && (moved[f.Path] || (f.OldPath != "" && moved[f.OldPath])) {
-			r.MarkInherited(v, f, old, new, rows)
-		}
-		st := FileStat{RebaseOnly: AllRebased(rows)}
-		for _, row := range rows {
-			if row.Kind == RowEqual || row.Kind == RowSkip {
-				continue
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			old, new, err := r.Contents(v, f)
+			if err != nil {
+				// A file that cannot be read is left out, as it was when
+				// this counted them one at a time.
+				return
 			}
-			if row.L.Num > 0 && !row.RebasedL {
-				st.Deleted++
+			rows := Diff(old, new).Rows
+			if rebased && (moved[f.Path] || (f.OldPath != "" && moved[f.OldPath])) {
+				r.MarkInherited(v, f, old, new, rows)
 			}
-			if row.R.Num > 0 && !row.RebasedR {
-				st.Added++
+			st := FileStat{RebaseOnly: AllRebased(rows)}
+			for _, row := range rows {
+				if row.Kind == RowEqual || row.Kind == RowSkip {
+					continue
+				}
+				if row.L.Num > 0 && !row.RebasedL {
+					st.Deleted++
+				}
+				if row.R.Num > 0 && !row.RebasedR {
+					st.Added++
+				}
 			}
+			stats[i] = &st
+		}()
+	}
+	wg.Wait()
+
+	out := make(map[string]FileStat, len(v.Files))
+	for i, f := range v.Files {
+		if stats[i] != nil {
+			out[f.Path] = *stats[i]
 		}
-		out[f.Path] = st
 	}
 	return out, nil
 }
+
+// statReaders is how many files are read out of the repository at once.
+// Each read is a command of its own, spending most of its time waiting on
+// the repository rather than on this process, so rather more of them run
+// at once than there are cores to run them on.
+const statReaders = 8
 
 // pathSet returns every path touched between the given pairs of revisions.
 func (r *Review) pathSet(revs ...string) (map[string]bool, error) {

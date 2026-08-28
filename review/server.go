@@ -870,20 +870,28 @@ type filesPage struct {
 	RebaseOnlyCount int
 }
 
-func (s *server) view(req *http.Request, r *Review) (*Change, *View, error) {
-	c, err := r.Change(req.PathValue("key"))
+// view resolves the change the request names and the diff to show of it,
+// and hands back the whole pending set it read on the way: a page drawing
+// the stack a change sits in wants that too, and reading it again means
+// running the repository's log a second time.
+func (s *server) view(req *http.Request, r *Review) (*Change, *View, []*Change, error) {
+	changes, err := r.Repo.Changes()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
+	}
+	c, err := changeIn(changes, req.PathValue("key"))
+	if err != nil {
+		return nil, nil, nil, err
 	}
 	v, err := r.View(c, req.FormValue("base"), req.FormValue("s"))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return c, v, nil
+	return c, v, changes, nil
 }
 
 func (s *server) files(w http.ResponseWriter, req *http.Request, r *Review) error {
-	c, v, err := s.view(req, r)
+	c, v, changes, err := s.view(req, r)
 	if err != nil {
 		return err
 	}
@@ -957,13 +965,9 @@ func (s *server) files(w http.ResponseWriter, req *http.Request, r *Review) erro
 	// mean going back to the change list to find where this one was. Only
 	// the near end of a long one is shown, unless this page was asked for
 	// with an end whole.
-	entries, err := r.Chain(c)
-	if err != nil {
-		return err
-	}
-	chain := req.FormValue("chain")
-	up, down := chain == "up" || chain == "all", chain == "down" || chain == "all"
-	for i, e := range window(entries, c.Rev, up, down) {
+	want := req.FormValue("chain")
+	up, down := want == "up" || want == "all", want == "down" || want == "all"
+	for i, e := range window(chain(changes, c), c.Rev, up, down) {
 		row := &chainRow{GraphRow: e}
 		switch {
 		case e.More:
@@ -1232,7 +1236,7 @@ func (s *server) pref(key string, def int) int {
 }
 
 func (s *server) diff(w http.ResponseWriter, req *http.Request, r *Review) error {
-	c, v, err := s.view(req, r)
+	c, v, _, err := s.view(req, r)
 	if err != nil {
 		return err
 	}
