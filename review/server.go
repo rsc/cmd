@@ -295,6 +295,9 @@ func serveStatic(path string) http.HandlerFunc {
 // jj backend from the first time it was asked for: jj is sometimes added
 // to a repository review is already serving, and a stale gitRepo cached
 // from before that would never notice.
+//
+// The change list is remembered for as long as the returned Review lives,
+// which is one request: see cachedRepo.
 func (s *server) review(name string) (*Review, error) {
 	path, err := s.db.RepoPath(name)
 	if err != nil {
@@ -304,7 +307,7 @@ func (s *server) review(name string) (*Review, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %v", path, err)
 	}
-	return &Review{Repo: repo, DB: s.db, Pin: s.pin, Name: name}, nil
+	return &Review{Repo: &cachedRepo{Repo: repo}, DB: s.db, Pin: s.pin, Name: name}, nil
 }
 
 // repoHandle wraps a handler that works within one repository, named by
