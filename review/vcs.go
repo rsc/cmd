@@ -474,7 +474,10 @@ var ErrNoRepo = errors.New("no jj or git repository")
 // OpenRepo returns the repository containing dir, preferring jj when the
 // directory is in both a jj and a git repository.
 func OpenRepo(dir string) (Repo, error) {
-	if out, err := run(dir, "jj", "root"); err == nil {
+	// --ignore-working-copy because this only asks where the repository is.
+	// Snapshotting the working copy is left to the first command that
+	// actually reads it; see jjRepo.jj.
+	if out, err := run(dir, "jj", "--ignore-working-copy", "root"); err == nil {
 		root := strings.TrimSpace(string(out))
 		return &jjRepo{root: root}, nil
 	}

@@ -603,33 +603,54 @@ func (s *server) allChanges(w http.ResponseWriter, req *http.Request) error {
 		return err
 	}
 	p := &allPage{head: s.headAll("review"), Replacing: true}
-	for _, path := range paths {
+	rows := make([][]*allRow, len(paths))
+	p.Repos = make([]*repoInfo, len(paths))
+	for i, path := range paths {
 		name, err := s.db.RepoName(path)
 		if err != nil {
 			return err
 		}
-		info := &repoInfo{Name: name, Path: path, URL: "/" + url.PathEscape(name)}
-		p.Repos = append(p.Repos, info)
+		p.Repos[i] = &repoInfo{Name: name, Path: path, URL: "/" + url.PathEscape(name)}
+	}
 
-		// A repository that has been moved or deleted must not take the
-		// whole page down with it.
-		r, err := s.review(name)
-		if err != nil {
-			info.Err = err.Error()
-			continue
-		}
-		changes, err := r.Repo.Changes()
-		if err != nil {
-			info.Err = err.Error()
-			continue
-		}
-		for _, c := range changes {
-			ci, err := s.changeInfo(r, c)
+	// Asking a repository what is pending in it means running its own log
+	// command, and one repository's answer has nothing to do with the
+	// next, so they are asked together rather than in turn. Across eleven
+	// repositories in turn this page took five seconds.
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, statReaders)
+	for i, info := range p.Repos {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			// A repository that has been moved or deleted must not take
+			// the whole page down with it.
+			r, err := s.review(info.Name)
 			if err != nil {
-				return err
+				info.Err = err.Error()
+				return
 			}
-			p.Rows = append(p.Rows, &allRow{changeInfo: ci, Repo: info, URL: s.filesURL(r, c.Key, "", "")})
-		}
+			changes, err := r.Repo.Changes()
+			if err != nil {
+				info.Err = err.Error()
+				return
+			}
+			for _, c := range changes {
+				ci, err := s.changeInfo(r, c)
+				if err != nil {
+					info.Err = err.Error()
+					return
+				}
+				rows[i] = append(rows[i], &allRow{changeInfo: ci, Repo: info, URL: s.filesURL(r, c.Key, "", "")})
+			}
+		}()
+	}
+	wg.Wait()
+	for _, rs := range rows {
+		p.Rows = append(p.Rows, rs...)
 	}
 	// Most recently snapshotted first, across every repository, which is
 	// the order the times in the rows are in. Snapshot times are recorded

@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -35,6 +36,10 @@ const jjDiffTemplate = `self.status_char() ++ "\0" ++ ` +
 type jjRepo struct {
 	root string
 
+	// Whether the working copy has been snapshotted for this repository
+	// yet, which the first command does and the rest then skip. See jj.
+	snapshotted atomic.Bool
+
 	// Which revset says what is pending, read once: it is a question about
 	// the configuration, and the configuration does not change under us.
 	pendingOnce   sync.Once
@@ -50,6 +55,26 @@ type jjRepo struct {
 
 func (r *jjRepo) Kind() string { return "jj" }
 func (r *jjRepo) Root() string { return r.root }
+
+// jj runs a jj command in the repository.
+//
+// The first one lets jj snapshot the working copy, which is how work not
+// yet committed reaches the page. Every one after it says not to bother:
+// snapshotting means walking the whole working tree, which in a large
+// repository costs several times what the command was actually asked to
+// do, and having been done once the answer does not change underneath a
+// page being drawn.
+//
+// Reading the configuration does not go through here. It does not look at
+// the repository at all, so letting it take the first turn would leave
+// the working copy unsnapshotted and everything after it reading a stale
+// one.
+func (r *jjRepo) jj(args ...string) ([]byte, error) {
+	if r.snapshotted.Swap(true) {
+		args = append([]string{"--ignore-working-copy"}, args...)
+	}
+	return run(r.root, append([]string{"jj"}, args...)...)
+}
 
 // jjPendingAll is the revset naming the commits to review, where the
 // repository says what it means by pending. jj-codereview defines
@@ -85,7 +110,7 @@ func (r *jjRepo) pending() string {
 // Changes returns the pending commits, newest first. In jj the working copy
 // is itself a commit, so uncommitted work appears here without a special case.
 func (r *jjRepo) Changes() ([]*Change, error) {
-	out, err := run(r.root, "jj", "log", "-r", r.pending(), "--no-graph", "-T", jjLogTemplate)
+	out, err := r.jj("log", "-r", r.pending(), "--no-graph", "-T", jjLogTemplate)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +159,7 @@ func (r *jjRepo) gerritCLs() (map[string]string, string) {
 		if r.clsBase = r.gerritURL(); r.clsBase == "" {
 			return
 		}
-		out, err := run(r.root, "jj", "log", "-r", clBookmarks, "--no-graph", "-T", jjCLTemplate)
+		out, err := r.jj("log", "-r", clBookmarks, "--no-graph", "-T", jjCLTemplate)
 		if err != nil {
 			return
 		}
@@ -197,7 +222,7 @@ func clNumber(name string) string {
 }
 
 func (r *jjRepo) Commit(rev string) (*Change, error) {
-	out, err := run(r.root, "jj", "log", "-r", rev, "--no-graph", "-T", jjLogTemplate)
+	out, err := r.jj("log", "-r", rev, "--no-graph", "-T", jjLogTemplate)
 	if err != nil {
 		return nil, err
 	}
@@ -250,7 +275,7 @@ func parseJJCommit(rec string) (*Change, error) {
 }
 
 func (r *jjRepo) Files(base, rev string) ([]*File, error) {
-	out, err := run(r.root, "jj", "diff", "--from", base, "--to", rev, "-T", jjDiffTemplate)
+	out, err := r.jj("diff", "--from", base, "--to", rev, "-T", jjDiffTemplate)
 	if err != nil {
 		return nil, err
 	}
@@ -273,7 +298,7 @@ func (r *jjRepo) Content(rev, path string) ([]byte, error) {
 	if rev == zeroID {
 		return nil, nil
 	}
-	return run(r.root, "jj", "file", "show", "-r", rev, "--", path)
+	return r.jj("file", "show", "-r", rev, "--", path)
 }
 
 // Pin writes a git ref naming rev in the git repository backing the jj repo,
