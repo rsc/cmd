@@ -163,8 +163,7 @@ func (r *Review) carryReviewed(prev, next *Snapshot) error {
 		}
 	}
 	// The commit message is not one of the repository's files, so compare
-	// it as it is rendered — all but the lines naming the parent, which a
-	// rebase moves without a word of the message changing.
+	// it as it is rendered, less the lines nobody wrote: see sameMessage.
 	if !sameMessage(r.Repo.Kind(), prev.Change(), next.Change()) {
 		moved[CommitMsgFile] = true
 	}
@@ -180,24 +179,15 @@ func (r *Review) carryReviewed(prev, next *Snapshot) error {
 	return nil
 }
 
-// sameMessage reports whether two commit messages differ only in lines
-// nobody wrote: the ones naming the parent commit, which move with every
-// rebase whatever it was that moved, and the Change-Id trailer, which the
-// tool that mails a change writes into it. Neither is a reason to read a
-// message again. The stable name of the parent is compared on its own,
-// since moving onto a different parent change is a real move.
+// sameMessage reports whether two commit messages say the same thing,
+// which is the only question a mark on the commit message answers. The
+// lines nobody wrote are left out of it: see msgWithoutParents.
 //
-// A snapshot recorded before parent identities were stored has none, and
-// an unknown parent is not a different one: refusing there would leave
-// every such snapshot asking for its message to be read again forever.
+// Putting a change on a different parent is a move worth noticing, and it
+// shows in the message file as the parent lines changing. It is still not
+// a reason to read the message again, which is a verdict on the words.
 func sameMessage(kind string, prev, next *Change) bool {
-	if msgWithoutParents(kind, prev) != msgWithoutParents(kind, next) {
-		return false
-	}
-	if prev.ParentKey != "" && next.ParentKey != "" {
-		return prev.ParentKey == next.ParentKey
-	}
-	return true
+	return msgWithoutParents(kind, prev) == msgWithoutParents(kind, next)
 }
 
 // A View is a diff of one change between two revisions: a target snapshot
@@ -604,8 +594,8 @@ func (r *Review) onlyInherited(prev, next *Snapshot) (bool, error) {
 			}
 		}
 	}
-	// The commit message is not one of the repository's files, and a rebase
-	// moves the line naming the parent without a word of it changing.
+	// The commit message is not one of the repository's files, and what it
+	// says is the whole of what it is asked: see sameMessage.
 	return sameMessage(r.Repo.Kind(), prev.Change(), next.Change()), nil
 }
 
@@ -613,13 +603,14 @@ func (r *Review) onlyInherited(prev, next *Snapshot) (bool, error) {
 // that nobody wrote: either of the lines naming its parent, and the
 // Change-Id trailer.
 //
-// The commit ID moves with every rebase, and the stable name moves only
-// when the change really has been put somewhere else — which is worth
-// knowing, and is why the caller asks about it separately rather than by
-// reading these lines. The Change-Id is put there by the tool that mails
-// the change, and the message says the same thing after it arrives as it
-// did before; asking for the message to be read again would make mailing
-// a change undo the reading of it.
+// Review writes the parent lines itself, from where the commit sits. The
+// commit ID moves with every rebase whatever it was that moved, and the
+// stable name moves when the change is put on a different parent — a move
+// worth noticing, but not by asking for the words of the message to be
+// read again. The Change-Id is put there by the tool that mails the
+// change, and the message says the same thing after it arrives as it did
+// before; asking for it to be read again would make mailing a change undo
+// the reading of it.
 //
 // Trailing blank lines go too, since a Change-Id arriving on its own
 // brings the blank line separating it from the message.

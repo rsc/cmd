@@ -815,14 +815,6 @@ func TestOnlyInheritedUnknownParentKey(t *testing.T) {
 	if got, want := msgWithoutParents("jj", prev.Change()), msgWithoutParents("jj", next.Change()); got != want {
 		t.Errorf("an unrecorded parent key changes the message:\n%q\nvs\n%q", got, want)
 	}
-
-	// Both known and different is a real move, and is caught.
-	prev.ParentKey, next.ParentKey = "aaa", "bbb"
-	if ok, err := r.onlyInherited(prev, next); err != nil {
-		t.Fatal(err)
-	} else if ok {
-		t.Error("a move onto a different parent change was taken for a rebase")
-	}
 }
 
 // TestRebaseOnlyFileTheChangeEdits is the case the cheap test misses: the
@@ -1098,6 +1090,20 @@ func TestMessageChangeIDIsNotAChange(t *testing.T) {
 	reworded := &Change{Message: "subject\n\nA different body.\n\nChange-Id: I123\n", Parent: "abc", ParentKey: "Ibelow"}
 	if sameMessage("git", mailed, reworded) {
 		t.Error("a reworded message did not count as changed")
+	}
+}
+
+// TestMessageParentIsNotAChange checks that putting a change on a
+// different parent does not ask for its message to be read again. Review
+// writes the line that moved, from where the commit sits; what the author
+// wrote says the same thing it did before.
+func TestMessageParentIsNotAChange(t *testing.T) {
+	msg := "subject\n\nThe body.\n"
+	before := &Change{Message: msg, Parent: "aaa", ParentKey: "Ione"}
+	moved := &Change{Message: msg, Parent: "bbb", ParentKey: "Itwo"}
+	if !sameMessage("jj", before, moved) {
+		t.Errorf("a different parent counted as a changed message:\n%s\n--- and ---\n%s",
+			msgWithoutParents("jj", before), msgWithoutParents("jj", moved))
 	}
 }
 
