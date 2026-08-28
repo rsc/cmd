@@ -249,6 +249,7 @@ func newServer(db *DB, home string, pin bool) *server {
 		fmt.Fprint(w, healthBody)
 	})
 	s.mux.HandleFunc("GET /{$}", s.handle(s.all))
+	s.mux.HandleFunc("GET /f/changes", s.handle(s.allChanges))
 	s.mux.HandleFunc("GET /{repo}", s.repoHandle(s.changes))
 	s.mux.HandleFunc("GET /{repo}/c/{key}", s.repoHandle(s.files))
 	s.mux.HandleFunc("GET /{repo}/d/{key}", s.repoHandle(s.diff))
@@ -562,17 +563,46 @@ type allPage struct {
 	head
 	Rows  []*allRow
 	Repos []*repoInfo
+
+	// Replacing reports that this is the list arriving on its own, to
+	// replace what the page was drawn with, rather than the page itself.
+	Replacing bool
 }
 
-// all lists the pending changes of every repository that has been
-// reviewed, newest commit first, so that the work most recently touched
-// is at the top whichever repository it is in.
+// all draws the page and leaves the list of changes to be fetched into it
+// afterwards. Gathering that list means opening every repository that has
+// been reviewed and asking each what is pending, which takes seconds; the
+// rest of the page is a database read, and waiting on the repositories to
+// show any of it leaves the browser blank for the whole of it.
 func (s *server) all(w http.ResponseWriter, req *http.Request) error {
 	paths, err := s.repoPaths()
 	if err != nil {
 		return err
 	}
 	p := &allPage{head: s.headAll("review")}
+	for _, path := range paths {
+		name, err := s.db.RepoName(path)
+		if err != nil {
+			return err
+		}
+		p.Repos = append(p.Repos, &repoInfo{Name: name, Path: path, URL: "/" + url.PathEscape(name)})
+	}
+	return tmpl.ExecuteTemplate(w, "all.html", p)
+}
+
+// allChanges is the list the page fetches: the pending changes of every
+// repository that has been reviewed, newest commit first, so that the work
+// most recently touched is at the top whichever repository it is in.
+//
+// It carries the repository list back with it as well, since whether a
+// repository can be read at all is only learned by trying, which is what
+// this does.
+func (s *server) allChanges(w http.ResponseWriter, req *http.Request) error {
+	paths, err := s.repoPaths()
+	if err != nil {
+		return err
+	}
+	p := &allPage{head: s.headAll("review"), Replacing: true}
 	for _, path := range paths {
 		name, err := s.db.RepoName(path)
 		if err != nil {
@@ -612,7 +642,7 @@ func (s *server) all(w http.ResponseWriter, req *http.Request) error {
 		}
 		return p.Rows[i].Date.After(p.Rows[j].Date)
 	})
-	return tmpl.ExecuteTemplate(w, "all.html", p)
+	return tmpl.ExecuteTemplate(w, "allchanges", p)
 }
 
 // messageLines is how much of a commit message the change page shows

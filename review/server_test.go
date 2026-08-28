@@ -135,9 +135,23 @@ func TestServerAllRepos(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	body := mustGet(t, s, "/")
+	// The page arrives without the list and asks for it, so that opening
+	// every repository does not hold the whole page up.
+	page := mustGet(t, s, "/")
+	if strings.Contains(page, "add a.go") {
+		t.Errorf("home page waited for the list of changes:\n%s", page)
+	}
+	if !strings.Contains(page, `hx-get="/f/changes"`) {
+		t.Errorf("home page does not ask for the list of changes:\n%s", page)
+	}
+	// It is its own keyboard context.
+	if !strings.Contains(page, `data-page="all"`) {
+		t.Error("home page is not the all-repositories context")
+	}
+
+	body := mustGet(t, s, "/f/changes")
 	if !strings.Contains(body, "add a.go") || !strings.Contains(body, "add b.go") {
-		t.Fatalf("home page does not list both repositories:\n%s", body)
+		t.Fatalf("the list does not have both repositories:\n%s", body)
 	}
 	// Most recently snapshotted first, and with the times equal this is the
 	// tie-break at work: the newer commit wins.
@@ -149,12 +163,11 @@ func TestServerAllRepos(t *testing.T) {
 	nameB, _ := r.DB.RepoName(other.Root())
 	for _, want := range []string{`href="/` + nameA + `"`, `href="/` + nameB + `"`} {
 		if !strings.Contains(body, want) {
-			t.Errorf("home page missing repository link %s:\n%s", want, body)
+			t.Errorf("the list is missing repository link %s:\n%s", want, body)
 		}
-	}
-	// It is its own keyboard context.
-	if !strings.Contains(body, `data-page="all"`) {
-		t.Error("home page is not the all-repositories context")
+		if !strings.Contains(page, want) {
+			t.Errorf("home page is missing repository link %s:\n%s", want, page)
+		}
 	}
 }
 
@@ -615,7 +628,7 @@ func TestServerWorkingTreeCannotBeCommented(t *testing.T) {
 	s, r, dir := newTestServer(t)
 	write(t, dir, "dirty.txt", "uncommitted\n")
 
-	body := mustGet(t, s, "/")
+	body := mustGet(t, s, "/f/changes")
 	if !strings.Contains(body, "uncommitted") {
 		t.Fatalf("working tree change missing from the change list:\n%s", body)
 	}
@@ -884,7 +897,7 @@ func TestChangeListCounts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	counts := changeCounts(t, mustGet(t, s, "/"), "Itest1")
+	counts := changeCounts(t, mustGet(t, s, "/f/changes"), "Itest1")
 	// 3 comments across 2 threads, one settled and one not, and both
 	// drafts still unpublished.
 	for _, want := range []string{"1 resolved", "1 unresolved", "2 Draft"} {
@@ -896,7 +909,7 @@ func TestChangeListCounts(t *testing.T) {
 	// After publishing, the thread counts remain but the draft chip goes
 	// away.
 	post(t, s, repoURL(t, r, "/publish"), url.Values{"key": {"Itest1"}})
-	counts = changeCounts(t, mustGet(t, s, "/"), "Itest1")
+	counts = changeCounts(t, mustGet(t, s, "/f/changes"), "Itest1")
 	if strings.Contains(counts, "draft") {
 		t.Errorf("draft chip survived publishing:\n%s", counts)
 	}
@@ -1425,7 +1438,7 @@ func TestChangeListReviewedChip(t *testing.T) {
 	twoSnapshots(t, s, r, dir)
 	snaps, _ := r.DB.Snapshots(r.Root(), "Itest1")
 
-	if body := mustGet(t, s, "/"); strings.Contains(body, "reviewedchip") {
+	if body := mustGet(t, s, "/f/changes"); strings.Contains(body, "reviewedchip") {
 		t.Error("change is marked reviewed before anything was marked")
 	}
 
@@ -1434,7 +1447,7 @@ func TestChangeListReviewedChip(t *testing.T) {
 	if err := r.DB.SetSnapshotReviewed(snaps[0].ID, true); err != nil {
 		t.Fatal(err)
 	}
-	if body := mustGet(t, s, "/"); strings.Contains(body, "reviewedchip") {
+	if body := mustGet(t, s, "/f/changes"); strings.Contains(body, "reviewedchip") {
 		t.Error("an older reviewed snapshot marked the whole change reviewed")
 	}
 
@@ -1442,7 +1455,7 @@ func TestChangeListReviewedChip(t *testing.T) {
 	if err := r.DB.SetSnapshotReviewed(snaps[1].ID, true); err != nil {
 		t.Fatal(err)
 	}
-	if body := mustGet(t, s, "/"); !strings.Contains(body, "reviewedchip") {
+	if body := mustGet(t, s, "/f/changes"); !strings.Contains(body, "reviewedchip") {
 		t.Errorf("change list does not show the reviewed chip:\n%s", body)
 	}
 
@@ -1451,7 +1464,7 @@ func TestChangeListReviewedChip(t *testing.T) {
 	do(t, dir, "git", "add", ".")
 	do(t, dir, "git", "commit", "-q", "--amend", "--no-edit")
 	post(t, s, repoURL(t, r, "/snapshot"), url.Values{"key": {"Itest1"}})
-	if body := mustGet(t, s, "/"); strings.Contains(body, "reviewedchip") {
+	if body := mustGet(t, s, "/f/changes"); strings.Contains(body, "reviewedchip") {
 		t.Error("a new snapshot did not clear the reviewed chip")
 	}
 }
@@ -1486,7 +1499,7 @@ func TestLGTM(t *testing.T) {
 		t.Error("LGTM is not lit after reload")
 	}
 	// And it shows in the change list.
-	if body = mustGet(t, s, "/"); !strings.Contains(body, "lgtmchip") {
+	if body = mustGet(t, s, "/f/changes"); !strings.Contains(body, "lgtmchip") {
 		t.Errorf("change list does not show LGTM:\n%s", body)
 	}
 
@@ -1496,7 +1509,7 @@ func TestLGTM(t *testing.T) {
 	do(t, dir, "git", "commit", "-q", "--amend", "--no-edit")
 	post(t, s, repoURL(t, r, "/snapshot"), url.Values{"key": {"Itest1"}})
 
-	if body = mustGet(t, s, "/"); strings.Contains(body, "lgtmchip") {
+	if body = mustGet(t, s, "/f/changes"); strings.Contains(body, "lgtmchip") {
 		t.Error("LGTM survived a new snapshot")
 	}
 	if body = mustGet(t, s, repoURL(t, r, "/c/Itest1")); strings.Contains(body, "lgtm on") {
