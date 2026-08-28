@@ -429,7 +429,7 @@ func cmdAdd(args []string) {
 	// Against the parent commit, so that every file the change touches can
 	// be commented on, not only the ones it has touched since the snapshot
 	// that happens to have been marked reviewed.
-	v, err := r.View(c, "parent", target)
+	v, err := r.View(c, "parent", target, "")
 	if err != nil {
 		log.Fatal(err)
 	}

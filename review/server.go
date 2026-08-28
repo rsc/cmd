@@ -904,7 +904,10 @@ func (s *server) view(req *http.Request, r *Review) (*Change, *View, []*Change, 
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	v, err := r.View(c, req.FormValue("base"), req.FormValue("s"))
+	// The file, where the request names one, decides what a base of "" is
+	// answered against: see Review.View. A view of the whole change names
+	// none.
+	v, err := r.View(c, req.FormValue("base"), req.FormValue("s"), req.FormValue("f"))
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -1452,7 +1455,7 @@ func (s *server) fragPage(req *http.Request, r *Review) (*Change, *View, *diffPa
 		return nil, nil, nil, err
 	}
 	base, target := req.FormValue("base"), req.FormValue("s")
-	v, err := r.View(c, base, target)
+	v, err := r.View(c, base, target, req.FormValue("f"))
 	if err != nil {
 		return nil, nil, nil, err
 	}

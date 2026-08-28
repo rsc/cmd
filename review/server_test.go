@@ -998,7 +998,69 @@ func TestSnapshotReviewedToggle(t *testing.T) {
 	}
 }
 
-// TestAutoBaseFromReviewedSnapshot is the point of marking snapshots:
+// TestAutoBaseFromReviewedFile checks that a file shown with no base of
+// its own is shown against the last snapshot in which that file was
+// marked reviewed, rather than the last one marked reviewed as a whole. A
+// file read on its own two snapshots ago should show two snapshots' worth
+// of change to it.
+func TestAutoBaseFromReviewedFile(t *testing.T) {
+	s, r, dir := newTestServer(t)
+	twoSnapshots(t, s, r, dir)
+	// A third, to look at the first two from.
+	write(t, dir, "a.go", "package main\n\nfunc main() {\n\tprintln(\"hello there\")\n}\n")
+	do(t, dir, "git", "add", ".")
+	do(t, dir, "git", "commit", "-q", "--amend", "--no-edit")
+	post(t, s, repoURL(t, r, "/snapshot"), url.Values{"key": {"Itest1"}})
+
+	snaps, err := r.DB.Snapshots(r.Root(), "Itest1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snaps) != 3 {
+		t.Fatalf("got %d snapshots, want 3", len(snaps))
+	}
+
+	// Snapshot 1 was read through, which marks every file in it. Then
+	// a.go alone was read again in snapshot 2.
+	if err := r.DB.SetSnapshotReviewed(snaps[0].ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.MarkSnapshotFiles(snaps[0], true); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.DB.SetReviewed(snaps[1].ID, "a.go", true); err != nil {
+		t.Fatal(err)
+	}
+
+	c, err := r.Change("Itest1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		file string
+		want int
+	}{
+		{"", 1},            // the change as a whole: the last read through
+		{"a.go", 2},        // a.go: the last snapshot a.go was read in
+		{CommitMsgFile, 1}, // read only as part of snapshot 1, so 1
+	} {
+		v, err := r.View(c, "", "", tt.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v.Base == nil || v.Base.N != tt.want || !v.AutoBase {
+			t.Errorf("base for %q = %+v, auto=%v; want snapshot %d", tt.file, v.Base, v.AutoBase, tt.want)
+		}
+	}
+
+	// And the page says which it means.
+	body := mustGet(t, s, repoURL(t, r, "/d/Itest1?f=a.go"))
+	if !strings.Contains(body, "since you last reviewed this file") {
+		t.Errorf("the file diff does not say the base is when this file was read:\n%s", body)
+	}
+}
+
+// TestAutoBaseFromReviewedSnapshot is the point of marking snapshots:// TestAutoBaseFromReviewedSnapshot is the point of marking snapshots:
 // opening a file afterwards shows only what changed since then.
 func TestAutoBaseFromReviewedSnapshot(t *testing.T) {
 	s, r, dir := newTestServer(t)
@@ -1007,7 +1069,7 @@ func TestAutoBaseFromReviewedSnapshot(t *testing.T) {
 
 	// With nothing reviewed, the base is the parent: the whole change.
 	c, _ := r.Change("Itest1")
-	v, err := r.View(c, "", "")
+	v, err := r.View(c, "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1019,7 +1081,7 @@ func TestAutoBaseFromReviewedSnapshot(t *testing.T) {
 	if err := r.DB.SetSnapshotReviewed(snaps[0].ID, true); err != nil {
 		t.Fatal(err)
 	}
-	if v, err = r.View(c, "", ""); err != nil {
+	if v, err = r.View(c, "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	if v.Base == nil || v.Base.N != 1 || !v.AutoBase {
@@ -1041,7 +1103,7 @@ func TestAutoBaseFromReviewedSnapshot(t *testing.T) {
 
 	// An explicit "parent" overrides the automatic choice, so the base
 	// selector can still get back to the whole change.
-	if v, err = r.View(c, "parent", ""); err != nil {
+	if v, err = r.View(c, "parent", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	if v.Base != nil || v.AutoBase {
@@ -1052,7 +1114,7 @@ func TestAutoBaseFromReviewedSnapshot(t *testing.T) {
 	if err := r.DB.SetSnapshotReviewed(snaps[1].ID, true); err != nil {
 		t.Fatal(err)
 	}
-	if v, err = r.View(c, "", ""); err != nil {
+	if v, err = r.View(c, "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	if v.Base == nil || v.Base.N != 1 {
@@ -1060,7 +1122,7 @@ func TestAutoBaseFromReviewedSnapshot(t *testing.T) {
 	}
 
 	// Viewing snapshot 1 itself has no older reviewed snapshot to use.
-	if v, err = r.View(c, "", "1"); err != nil {
+	if v, err = r.View(c, "", "1", ""); err != nil {
 		t.Fatal(err)
 	}
 	if v.Base != nil {
@@ -1199,7 +1261,7 @@ func TestCommitMsgAgainstParentIsAllNew(t *testing.T) {
 	s, r, dir := newTestServer(t)
 	c, _ := r.Change("Itest1")
 
-	v, err := r.View(c, "parent", "")
+	v, err := r.View(c, "parent", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1231,7 +1293,7 @@ func TestCommitMsgAgainstParentIsAllNew(t *testing.T) {
 	post(t, s, repoURL(t, r, "/snapshot"), url.Values{"key": {"Itest1"}})
 
 	c, _ = r.Change("Itest1")
-	v, err = r.View(c, "1", "2")
+	v, err = r.View(c, "1", "2", "")
 	if err != nil {
 		t.Fatal(err)
 	}

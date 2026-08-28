@@ -797,6 +797,33 @@ func (d *DB) LGTMSnapshots(repo, key string) (map[int64]bool, error) {
 // LastReviewedSnapshot returns the newest reviewed snapshot of a change
 // older than snapshot number n, or nil if there is none. It is what makes
 // opening a file show only what has changed since it was last reviewed.
+// LastReviewedFileSnapshot returns the newest snapshot before n in which
+// one file of a change was last read: the newest carrying a mark on that
+// file, or a mark on the whole snapshot, whichever is newer.
+//
+// Reading a snapshot through marks every file in it, so the file's own
+// mark is normally the newer of the two, and this is the file's answer
+// rather than the change's. The snapshot's mark still counts, though.
+// It is what the change as a whole is shown against, and a file shown
+// against something older than that would be shown against the parent
+// commit, where a file the change does not touch — everything in it
+// having come from a rebase — is not in the diff at all, and so could
+// not be opened from the very list that had just offered it.
+func (d *DB) LastReviewedFileSnapshot(repo, key, file string, n int) (*Snapshot, error) {
+	row := d.sql.QueryRow(`SELECT `+snapshotCols+`
+		FROM snapshot s
+		JOIN change c ON c.id = s.change_id
+		WHERE c.repo = ? AND c.change_key = ? AND s.n < ?
+		  AND (EXISTS (SELECT 1 FROM reviewed rv WHERE rv.snapshot_id = s.id AND rv.file = ?)
+		    OR EXISTS (SELECT 1 FROM snapshot_mark m WHERE m.snapshot_id = s.id AND m.kind = ?))
+		ORDER BY s.n DESC LIMIT 1`, repo, key, n, file, markReviewed)
+	s, err := scanSnapshot(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return s, err
+}
+
 func (d *DB) LastReviewedSnapshot(repo, key string, n int) (*Snapshot, error) {
 	row := d.sql.QueryRow(`SELECT `+snapshotCols+`
 		FROM snapshot s

@@ -35,7 +35,7 @@ func TestGrabAndView(t *testing.T) {
 
 	// Viewing a change snapshots it implicitly, so there is always
 	// something for comments to attach to.
-	v, err := r.View(c, "", "")
+	v, err := r.View(c, "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestViewBetweenSnapshots(t *testing.T) {
 	}
 
 	// Snapshot 1 against snapshot 2 shows only what the amend did.
-	v, err := r.View(c, "1", "2")
+	v, err := r.View(c, "1", "2", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,10 +125,10 @@ func TestViewBetweenSnapshots(t *testing.T) {
 	}
 
 	// A base that is not older than the target is refused.
-	if _, err := r.View(c, "2", "2"); err == nil {
+	if _, err := r.View(c, "2", "2", ""); err == nil {
 		t.Error("View accepted a base equal to the target")
 	}
-	if _, err := r.View(c, "5", ""); err == nil {
+	if _, err := r.View(c, "5", "", ""); err == nil {
 		t.Error("View accepted a nonexistent snapshot")
 	}
 }
@@ -213,7 +213,7 @@ func TestPlaceThreads(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	v, err := r.View(c, "", "") // parent against snapshot 2
+	v, err := r.View(c, "", "", "") // parent against snapshot 2
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +245,7 @@ func TestPlaceThreads(t *testing.T) {
 
 	// Viewing snapshot 1 again puts the comment back on its own line,
 	// no longer marked as belonging elsewhere.
-	v1, err := r.View(c, "", "1")
+	v1, err := r.View(c, "", "1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +274,7 @@ func TestPlaceThreadsStale(t *testing.T) {
 	changes, _ = r.Repo.Changes()
 	r.Grab(changes[0])
 
-	v, _ := r.View(changes[0], "", "")
+	v, _ := r.View(changes[0], "", "", "")
 	all, _ := r.DB.Threads(r.Root(), changes[0].Key)
 	_, new, _ := r.Contents(v, v.File("a.go"))
 	newLines, _ := splitLines(new)
@@ -333,7 +333,7 @@ func TestGrabPinsCommit(t *testing.T) {
 	// Snapshot 1's commit must still be diffable after collection.
 	changes, _ = r.Repo.Changes()
 	r.Grab(changes[0])
-	v, err := r.View(changes[0], "1", "2")
+	v, err := r.View(changes[0], "1", "2", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -497,7 +497,7 @@ func TestRebaseInheritedEdits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	v, err := r.View(top, "1", "2")
+	v, err := r.View(top, "1", "2", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -537,7 +537,7 @@ func TestRebaseInheritedEdits(t *testing.T) {
 
 	// Against the parent commit the whole diff is the change's own work,
 	// however much of it a rebase carried along.
-	pv, err := r.View(top, "parent", "2")
+	pv, err := r.View(top, "parent", "2", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -860,7 +860,7 @@ func TestRebaseOnlyFileTheChangeEdits(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	v, err := r.View(upper, "1", "2")
+	v, err := r.View(upper, "1", "2", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -881,7 +881,7 @@ func TestRebaseOnlyFileTheChangeEdits(t *testing.T) {
 
 	// Against the parent the change's own edit is there to see, so it is
 	// not rebase-only in that view.
-	pv, err := r.View(upper, "parent", "2")
+	pv, err := r.View(upper, "parent", "2", "")
 	if err != nil {
 		t.Fatal(err)
 	}

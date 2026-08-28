@@ -77,6 +77,10 @@
   <span class="autobase" title="this change does not touch this file: everything here was done by a commit below it">
     changes in file are entirely due to earlier commits
   </span>
+  {{else if .FileParam}}
+  <span class="autobase" title="Snapshot {{.BaseN}} is the most recent one in which you marked this file reviewed">
+    showing changes since you last reviewed this file
+  </span>
   {{else}}
   <span class="autobase" title="Snapshot {{.BaseN}} is the most recent one you marked reviewed">
     showing changes since you last reviewed

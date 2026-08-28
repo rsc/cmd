@@ -228,7 +228,11 @@ func (v *View) TargetName() string {
 // "" or "parent" means the target's parent commit, and a number selects
 // that snapshot. target selects the right side: "" means the newest
 // snapshot, and a number selects that one.
-func (r *Review) View(c *Change, base, target string) (*View, error) {
+//
+// file names the one file being looked at, where only one is, which is
+// what a base of "" is answered against: see below. It is "" for a view
+// of the whole change.
+func (r *Review) View(c *Change, base, target, file string) (*View, error) {
 	snaps, err := r.EnsureSnapshot(c)
 	if err != nil {
 		return nil, err
@@ -258,12 +262,24 @@ func (r *Review) View(c *Change, base, target string) (*View, error) {
 		v.BaseRev = v.Target.Parent
 		switch base {
 		case "":
-			// No base was asked for. Default to the newest snapshot that
-			// has already been reviewed, so that opening a file shows only
-			// what has changed since it was last looked at. With nothing
-			// reviewed yet, this falls through to the parent commit and
-			// the whole change is shown.
-			prev, err := r.DB.LastReviewedSnapshot(r.Root(), c.Key, v.Target.N)
+			// No base was asked for. Default to the newest snapshot already
+			// reviewed, so that what is shown is only what has changed since
+			// it was last looked at. With nothing reviewed yet this falls
+			// through to the parent commit, and the whole change is shown.
+			//
+			// Reviewing is recorded file by file as well as snapshot by
+			// snapshot, so a view of one file asks when that file was last
+			// read rather than when the change was: a file marked on its own
+			// two snapshots ago should show two snapshots' worth of change
+			// to it, not everything since the whole change was last read
+			// through.
+			var prev *Snapshot
+			var err error
+			if file != "" {
+				prev, err = r.DB.LastReviewedFileSnapshot(r.Root(), c.Key, file, v.Target.N)
+			} else {
+				prev, err = r.DB.LastReviewedSnapshot(r.Root(), c.Key, v.Target.N)
+			}
 			if err != nil {
 				return nil, err
 			}
