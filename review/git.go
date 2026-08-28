@@ -28,13 +28,13 @@ type gitRepo struct {
 func (r *gitRepo) Kind() string { return "git" }
 func (r *gitRepo) Root() string { return r.root }
 
-// Changes returns the commits not reachable from origin, newest first,
-// preceded by the uncommitted working tree if it is dirty. Only origin
-// says what has landed: pushing to another remote, such as a fork used
-// to open a pull request, does not make a commit any less pending, and
-// must not make it disappear from review.
+// Changes returns the commits not reachable from the upstream remote,
+// newest first, preceded by the uncommitted working tree if it is dirty.
+// Only the upstream says what has landed: pushing to another remote, such
+// as a fork used to open a pull request, does not make a commit any less
+// pending, and must not make it disappear from review.
 func (r *gitRepo) Changes() ([]*Change, error) {
-	out, err := run(r.root, "git", "log", gitLogFormat, "HEAD", "--not", "--remotes=origin")
+	out, err := run(r.root, "git", "log", gitLogFormat, "HEAD", "--not", "--remotes="+r.upstream())
 	if err != nil {
 		// A repository with no commits at all has no HEAD to log.
 		if _, err2 := run(r.root, "git", "rev-parse", "HEAD"); err2 != nil {
@@ -63,6 +63,34 @@ func (r *gitRepo) Changes() ([]*Change, error) {
 	}
 	r.setParentKeys(changes, notes)
 	return changes, nil
+}
+
+// upstream returns the remote whose refs say what has landed: the one the
+// current branch tracks, which is what git itself means by upstream and
+// what git push and git pull go to.
+//
+// A repository that says nothing about it is taken to use origin, which is
+// the name git gives the remote it clones from. Not every repository does:
+// one whose upstream is called something else was reading its whole
+// history as pending, since nothing had landed on a remote it does not
+// have.
+func (r *gitRepo) upstream() string {
+	branch, err := run(r.root, "git", "branch", "--show-current")
+	if err != nil {
+		return "origin"
+	}
+	name := strings.TrimSpace(string(branch))
+	if name == "" {
+		return "origin" // detached: no branch to have an upstream
+	}
+	out, err := run(r.root, "git", "config", "--get", "branch."+name+".remote")
+	if err != nil {
+		return "origin"
+	}
+	if remote := strings.TrimSpace(string(out)); remote != "" {
+		return remote
+	}
+	return "origin"
 }
 
 // setParentKeys fills in each change's ParentKey. Stacked changes name one

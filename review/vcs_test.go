@@ -128,6 +128,45 @@ func TestGitChangesIgnoresNonOriginRemote(t *testing.T) {
 	}
 }
 
+// TestGitUpstreamNotOrigin checks that what has landed is decided by the
+// remote the branch tracks rather than by the name origin. A repository
+// whose upstream is called something else was reading its whole history
+// as pending, since nothing had landed on a remote it does not have.
+func TestGitUpstreamNotOrigin(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found")
+	}
+	dir := t.TempDir()
+	do(t, dir, "git", "init", "-q", "-b", "main")
+	do(t, dir, "git", "config", "user.name", "Tester")
+	do(t, dir, "git", "config", "user.email", "tester@example.com")
+	write(t, dir, "base.txt", "base\n")
+	do(t, dir, "git", "add", ".")
+	do(t, dir, "git", "commit", "-q", "-m", "base commit")
+	// The upstream is called prod, and the branch tracks it. There is no
+	// remote called origin at all.
+	head := do(t, dir, "git", "rev-parse", "HEAD")
+	do(t, dir, "git", "update-ref", "refs/remotes/prod/main", head[:len(head)-1])
+	do(t, dir, "git", "config", "branch.main.remote", "prod")
+	do(t, dir, "git", "config", "branch.main.merge", "refs/heads/main")
+
+	write(t, dir, "a.txt", "one\n")
+	do(t, dir, "git", "add", ".")
+	do(t, dir, "git", "commit", "-q", "-m", "add a.txt")
+
+	r, err := OpenRepo(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changes, err := r.Changes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 || changes[0].Subject != "add a.txt" {
+		t.Fatalf("Changes = %+v, want only the commit not yet on prod", changes)
+	}
+}
+
 func TestGitChangeID(t *testing.T) {
 	dir := newGitRepo(t)
 	write(t, dir, "a.txt", "x\n")
