@@ -155,32 +155,80 @@ const jjCLTemplate = `bookmarks ++ "\0" ++ ` +
 // configuration rather than about the repository, and costs accordingly.
 func (r *jjRepo) gerritCLs() (map[string]string, string) {
 	r.clsOnce.Do(func() {
+		op := r.opID()
+		if v, ok := clCache.Load(r.root); ok {
+			if a := v.(clAnswer); a.op == op && op != "" {
+				r.cls, r.clsBase = a.cls, a.base
+				return
+			}
+		}
 		r.cls = map[string]string{}
-		if r.clsBase = r.gerritURL(); r.clsBase == "" {
-			return
+		if r.clsBase = r.gerritURL(); r.clsBase != "" {
+			r.readCLs()
 		}
-		out, err := r.jj("log", "-r", clBookmarks, "--no-graph", "-T", jjCLTemplate)
-		if err != nil {
-			return
-		}
-		for _, rec := range records(out, 1) {
-			f := strings.SplitN(rec, "\x00", 2)
-			if len(f) != 2 {
-				continue
-			}
-			id := changeIDTrailer(f[1])
-			if id == "" {
-				continue
-			}
-			for _, name := range strings.Fields(f[0]) {
-				if n := clNumber(name); n != "" {
-					r.cls[id] = n
-					break
-				}
-			}
+		if op != "" {
+			clCache.Store(r.root, clAnswer{op: op, cls: r.cls, base: r.clsBase})
 		}
 	})
 	return r.cls, r.clsBase
+}
+
+// A clAnswer is what gerritCLs found, and the operation it found it at.
+// The map is never written again once it is stored, so any number of
+// repositories can read the one answer.
+type clAnswer struct {
+	op   string
+	cls  map[string]string
+	base string
+}
+
+// clCache holds that answer for each repository, by root. A Change-Id
+// names the same Gerrit change for good, so an answer can only go out of
+// date by gaining entries, and it can only gain them when something
+// happens in the repository: uploading a change writes bookmarks, which
+// is an operation like any other. Where the Gerrit is is read alongside
+// it, and so a change to that takes effect at the next operation rather
+// than at once.
+var clCache sync.Map // repository root -> clAnswer
+
+// opID returns the ID of the repository's current operation, which is
+// jj's name for the state everything else here is read at. jj keeps it as
+// the name of a file, so asking costs a directory read rather than
+// another jj command.
+//
+// It returns "" if there is anything unusual to see — no operation head,
+// or several, as during a concurrent one — which reads as "do not trust
+// anything remembered about this repository".
+func (r *jjRepo) opID() string {
+	heads, err := os.ReadDir(filepath.Join(r.root, ".jj", "repo", "op_heads", "heads"))
+	if err != nil || len(heads) != 1 {
+		return ""
+	}
+	return heads[0].Name()
+}
+
+// readCLs fills in r.cls from the bookmarks naming Gerrit changes.
+func (r *jjRepo) readCLs() {
+	out, err := r.jj("log", "-r", clBookmarks, "--no-graph", "-T", jjCLTemplate)
+	if err != nil {
+		return
+	}
+	for _, rec := range records(out, 1) {
+		f := strings.SplitN(rec, "\x00", 2)
+		if len(f) != 2 {
+			continue
+		}
+		id := changeIDTrailer(f[1])
+		if id == "" {
+			continue
+		}
+		for _, name := range strings.Fields(f[0]) {
+			if n := clNumber(name); n != "" {
+				r.cls[id] = n
+				break
+			}
+		}
+	}
 }
 
 // gerritURL returns the base URL of the Gerrit server the repository's
