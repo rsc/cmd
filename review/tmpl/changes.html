@@ -23,7 +23,6 @@
       {{with .Info}}
       <tr class="item" data-href="{{.URL}}" data-key="{{.Key}}"
           data-filter="{{.Subject}} {{.Author}} {{.ShortRev}}">
-        <td class="pick">{{if not .Working}}<input type="checkbox" class="pickbox" aria-label="select">{{end}}</td>
         <td class="graphcell" style="width:{{$row.Width}}px">{{$row.Graph}}</td>
         <td class="subject">
           {{template "cl" .}}<a href="{{.URL}}">{{.Subject}}</a>
@@ -46,7 +45,6 @@
       </tr>
       {{else}}
       <tr class="joinrow">
-        <td class="pick"></td>
         <td class="graphcell" style="width:{{.Width}}px">{{.Graph}}</td>
         <td colspan="6"></td>
       </tr>

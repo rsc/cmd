@@ -228,28 +228,18 @@
 			if (row.dataset.href) go(row.dataset.href);
 		},
 
-		toggleCheckbox() {
-			const row = currentRow() || setCursor(0);
-			if (!row) return;
-			const box = row.querySelector("input.pickbox");
-			if (box) box.checked = !box.checked;
-		},
-
 		grabSnapshot() {
 			// G fires the same request the Snapshot / Snapshot All button
 			// would, without going through the button, so nothing marks it
 			// busy on its own; do that here instead, on whichever of the
 			// two is on the page.
 			markBusy(document.querySelector('form[action$="/snapshot"] button[type="submit"]'));
-			const picked = Array.from(document.querySelectorAll("input.pickbox:checked"))
-				.map((b) => b.closest("tr").dataset.key);
-			const row = currentRow();
-			const keys = picked.length ? picked
-				: view.key ? [view.key]
-				: row && row.dataset.key ? [row.dataset.key] : [];
+			// The change being viewed, where one is; in a list, the whole
+			// repository, which is what the Snapshot All button beside it
+			// does. Snapshotting a change that has not moved records
+			// nothing, so there is no reason to be choosy about it.
 			const base = view.repo ? "/" + encodeURIComponent(view.repo) : "";
-			if (keys.length === 0) { post(base + "/snapshot", {}).then(() => window.location.reload()); return; }
-			Promise.all(keys.map((k) => post(base + "/snapshot", { key: k })))
+			post(base + "/snapshot", view.key ? { key: view.key } : {})
 				.then(() => window.location.reload());
 		},
 
