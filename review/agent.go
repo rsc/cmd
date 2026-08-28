@@ -5,10 +5,13 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -299,8 +302,32 @@ func cmdSkill(args []string) {
 	fmt.Fprintf(stdout, "Ask an agent to address the review comments and it will find this.\n")
 }
 
+// knownSkills are the sha256 hashes of the skill texts review has
+// written before. A file hashing to one of them is a copy review wrote
+// that nobody has touched since, so bringing it up to date takes nothing
+// away from anyone.
+//
+// When the text changes, the hash it had goes here, or the copies the
+// last release installed stop being recognized as review's own.
+var knownSkills = []string{
+	"de80b5a33f6040d0f99c18c6998084e1a89106122b404edbbbb826b899241a94", // review/v0.0.1 through v0.0.6
+}
+
+// ourSkill reports whether a file found at a skill path is one review
+// wrote and left alone: the text it writes now, or one it used to write.
+// Anything else is somebody else's — a skill of their own under that
+// name, or this one after they edited it — and is not review's to rewrite.
+func ourSkill(data []byte) bool {
+	if string(data) == skillText() {
+		return true
+	}
+	sum := sha256.Sum256(data)
+	return slices.Contains(knownSkills, hex.EncodeToString(sum[:]))
+}
+
 // updateSkills rewrites every already-installed copy of the skill that has
-// fallen behind this binary, and reports the paths it wrote.
+// fallen behind this binary, and reports the paths it wrote and the paths
+// it found something else at and left alone.
 //
 // It never installs one where there is none. Putting instructions in front
 // of an agent is the user's decision, made by running "review skill
@@ -308,17 +335,21 @@ func cmdSkill(args []string) {
 // bookkeeping, and forgetting it is how an agent ends up reading about
 // flags this binary no longer has.
 //
+// Nor does it write over anything it did not write. Updating is only
+// bookkeeping while the file is review's own; a skill somebody wrote for
+// themselves under that name, or a copy of this one they have since
+// edited, is theirs, and the most this does about one is say it is there.
+//
 // Only the copies under the home directory are considered. A -project
 // install lives in a repository the server may know nothing about, and
 // belongs to that repository's checkout rather than to whoever happens to
 // be serving it.
-func updateSkills() []string {
+func updateSkills() (wrote, kept []string) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	want := skillText()
-	var wrote []string
 	seen := map[string]bool{}
 	for _, t := range agentTools {
 		if t.Skill == "" {
@@ -335,13 +366,17 @@ func updateSkills() []string {
 		if err != nil || string(data) == want {
 			continue
 		}
+		if !ourSkill(data) {
+			kept = append(kept, path)
+			continue
+		}
 		if err := writeSkill(path); err != nil {
 			log.Printf("updating skill at %s: %v", path, err)
 			continue
 		}
 		wrote = append(wrote, path)
 	}
-	return wrote
+	return wrote, kept
 }
 
 func writeSkill(path string) error {

@@ -6,6 +6,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -242,7 +244,7 @@ func TestUpdateSkills(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	// Nothing installed: nothing to update, and nothing created.
-	if wrote := updateSkills(); len(wrote) != 0 {
+	if wrote, _ := updateSkills(); len(wrote) != 0 {
 		t.Errorf("updateSkills wrote %v into an empty home directory", wrote)
 	}
 	if entries, _ := os.ReadDir(home); len(entries) != 0 {
@@ -259,16 +261,23 @@ func TestUpdateSkills(t *testing.T) {
 	skill := filepath.Join(home, ".claude", "skills", "review", "SKILL.md")
 
 	// Up to date already: no write, so nothing is reported.
-	if wrote := updateSkills(); len(wrote) != 0 {
+	if wrote, _ := updateSkills(); len(wrote) != 0 {
 		t.Errorf("updateSkills rewrote an up-to-date skill: %v", wrote)
 	}
 
-	if err := os.WriteFile(skill, []byte("stale instructions\n"), 0666); err != nil {
+	// What an older binary would have left: recognizable as review's own,
+	// so it is brought up to date.
+	const older = "stale instructions\n"
+	defer func(saved []string) { knownSkills = saved }(knownSkills)
+	sum := sha256.Sum256([]byte(older))
+	knownSkills = append(knownSkills, hex.EncodeToString(sum[:]))
+
+	if err := os.WriteFile(skill, []byte(older), 0666); err != nil {
 		t.Fatal(err)
 	}
-	wrote := updateSkills()
+	wrote, kept := updateSkills()
 	if len(wrote) != 1 || wrote[0] != skill {
-		t.Fatalf("updateSkills = %v, want [%s]", wrote, skill)
+		t.Fatalf("updateSkills = %v, %v, want [%s] written", wrote, kept, skill)
 	}
 	data, err := os.ReadFile(skill)
 	if err != nil {
@@ -276,6 +285,22 @@ func TestUpdateSkills(t *testing.T) {
 	}
 	if string(data) != skillText() {
 		t.Error("stale skill was not brought up to date")
+	}
+
+	// Something else under that name is somebody else's: left alone, and
+	// said so rather than silently.
+	const mine = "my own instructions\n"
+	if err := os.WriteFile(skill, []byte(mine), 0666); err != nil {
+		t.Fatal(err)
+	}
+	wrote, kept = updateSkills()
+	if len(wrote) != 0 || len(kept) != 1 || kept[0] != skill {
+		t.Fatalf("updateSkills = %v, %v, want [%s] left alone", wrote, kept, skill)
+	}
+	if data, err := os.ReadFile(skill); err != nil {
+		t.Fatal(err)
+	} else if string(data) != mine {
+		t.Errorf("a skill review did not write was overwritten:\n%s", data)
 	}
 
 	// The tools that were never installed are still not installed: an

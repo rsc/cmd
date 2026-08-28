@@ -184,9 +184,14 @@ func cmdServe(args []string) {
 	}
 	// A new binary is usually a new set of instructions, and the server
 	// outlives the shell that installed the old ones, so bring any copy
-	// already installed up to date before serving.
-	for _, path := range updateSkills() {
+	// already installed up to date before serving. A copy review did not
+	// write is somebody else's and is only reported.
+	updated, kept := updateSkills()
+	for _, path := range updated {
 		fmt.Fprintf(stderr, "review: updated skill at %s\n", path)
+	}
+	for _, path := range kept {
+		fmt.Fprintf(stderr, "review: skill at %s is not one review wrote; leaving it alone\n", path)
 	}
 
 	// Leaving a state file behind would make the next run think a server

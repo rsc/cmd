@@ -421,6 +421,12 @@ has. A file that is not there stays not there, so this never installs
 instructions nobody asked for, and one that already matches is left alone
 rather than rewritten.
 
+It rewrites only what it wrote. A file review is to bring up to date must
+hash to a text review has written, which a copy nobody has touched does;
+a skill written by hand under that name, or this one after it was edited,
+is somebody else's, and starting the server says it is there and leaves
+it as it is. Installing over one is still allowed, being asked for.
+
 The -project flag writes the same things into the repository instead, so
 that they travel with the code, at each tool's own workspace path: Claude
 Code reads .claude/skills, while Antigravity and Codex both read
