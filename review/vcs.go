@@ -476,6 +476,34 @@ func OpenRepo(dir string) (Repo, error) {
 	return nil, fmt.Errorf("%w at %s", ErrNoRepo, dir)
 }
 
+// A cachedRepo answers for the change list once and then remembers it.
+// Building one page asks for it several times over — the change being
+// looked at, the chain it sits in, the snapshot to compare against — and
+// each of those is a walk of the log and a read of every review-key note.
+//
+// Only the server wraps a repository in one, and only for the length of a
+// request, which is the whole lifetime of the answer: no commit is
+// rewritten within one, and Grab, which does change a key, changes it on
+// the Change this holds. Anything that outlives a request — a command,
+// or a test amending a commit and looking again — must go on asking the
+// repository itself, which is why this is not what OpenRepo returns.
+//
+// One request is one goroutine, so there is no lock here to say otherwise.
+type cachedRepo struct {
+	Repo
+	changes []*Change
+	err     error
+	read    bool
+}
+
+func (r *cachedRepo) Changes() ([]*Change, error) {
+	if !r.read {
+		r.changes, r.err = r.Repo.Changes()
+		r.read = true
+	}
+	return r.changes, r.err
+}
+
 // FileContent returns the contents of path at rev, rendering the commit
 // message pseudo-file when asked for it.
 func FileContent(r Repo, rev, path string) ([]byte, error) {
@@ -552,8 +580,16 @@ func subject(msg string) string {
 
 // run runs a command in dir and returns its standard output.
 func run(dir string, args ...string) ([]byte, error) {
+	return runIn(dir, nil, args...)
+}
+
+// runIn is run with stdin on the command's standard input.
+func runIn(dir string, stdin []byte, args ...string) ([]byte, error) {
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Dir = dir
+	if stdin != nil {
+		cmd.Stdin = bytes.NewReader(stdin)
+	}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
