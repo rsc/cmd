@@ -313,8 +313,16 @@ button.reviewed.lgtm.on:hover { background: var(--gerrit-blue-light); }
 	font-family: var(--font);
 	font-size: 12px;
 	margin-top: 6px;
+	list-style: none;
 }
-.commitmsg details[open] summary { margin-bottom: 6px; }
+.commitmsg summary::-webkit-details-marker { display: none; }
+/* Opened, the summary would stand in the middle of the message it has just
+   finished showing, breaking the text in two. So it goes to the end
+   instead, where it offers to put the message back as it was. */
+.commitmsg details { display: flex; flex-direction: column; }
+.commitmsg details[open] summary { order: 1; }
+.commitmsg details:not([open]) .less,
+.commitmsg details[open] .more { display: none; }
 
 /* The commit message and the relation chain sit side by side, as in
    Gerrit: what this change says on the left, where it sits on the right. */

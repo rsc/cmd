@@ -26,7 +26,7 @@
       <pre>{{.MessageHead}}</pre>
       {{if .MessageRest}}
       <details>
-        <summary>{{.MoreLines}} more line{{if ne .MoreLines 1}}s{{end}}</summary>
+        <summary><span class="more">▾ {{.MoreLines}} more line{{if ne .MoreLines 1}}s{{end}}</span><span class="less">▴ Shorten</span></summary>
         <pre>{{.MessageRest}}</pre>
       </details>
       {{end}}
