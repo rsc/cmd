@@ -180,11 +180,12 @@ func (r *Review) carryReviewed(prev, next *Snapshot) error {
 	return nil
 }
 
-// sameMessage reports whether two commit messages differ only in the lines
-// naming the parent commit. Those move with every rebase, whatever it was
-// that moved, so they are no reason to read a message again; the stable
-// name of the parent is compared on its own, since moving onto a different
-// parent change is a real move.
+// sameMessage reports whether two commit messages differ only in lines
+// nobody wrote: the ones naming the parent commit, which move with every
+// rebase whatever it was that moved, and the Change-Id trailer, which the
+// tool that mails a change writes into it. Neither is a reason to read a
+// message again. The stable name of the parent is compared on its own,
+// since moving onto a different parent change is a real move.
 //
 // A snapshot recorded before parent identities were stored has none, and
 // an unknown parent is not a different one: refusing there would leave
@@ -608,22 +609,32 @@ func (r *Review) onlyInherited(prev, next *Snapshot) (bool, error) {
 	return sameMessage(r.Repo.Kind(), prev.Change(), next.Change()), nil
 }
 
-// msgWithoutParents renders a commit message file without either of the
-// lines naming its parent. The commit ID moves with every rebase, and the
-// stable name moves only when the change really has been put somewhere
-// else — which is worth knowing, and is why the caller asks about it
-// separately rather than by reading these lines.
+// msgWithoutParents renders a commit message file without the lines in it
+// that nobody wrote: either of the lines naming its parent, and the
+// Change-Id trailer.
+//
+// The commit ID moves with every rebase, and the stable name moves only
+// when the change really has been put somewhere else — which is worth
+// knowing, and is why the caller asks about it separately rather than by
+// reading these lines. The Change-Id is put there by the tool that mails
+// the change, and the message says the same thing after it arrives as it
+// did before; asking for the message to be read again would make mailing
+// a change undo the reading of it.
+//
+// Trailing blank lines go too, since a Change-Id arriving on its own
+// brings the blank line separating it from the message.
 func msgWithoutParents(kind string, c *Change) string {
 	lines := strings.Split(string(commitMsgContent(kind, c)), "\n")
 	out := lines[:0]
 	for _, l := range lines {
 		if strings.HasPrefix(l, "Git Parent:") || strings.HasPrefix(l, "Parent:") ||
-			strings.HasPrefix(l, "JJ Parent:") || strings.HasPrefix(l, "Change Parent:") {
+			strings.HasPrefix(l, "JJ Parent:") || strings.HasPrefix(l, "Change Parent:") ||
+			strings.HasPrefix(l, "Change-Id:") {
 			continue
 		}
 		out = append(out, l)
 	}
-	return strings.Join(out, "\n")
+	return strings.TrimRight(strings.Join(out, "\n"), "\n")
 }
 
 // MarkInherited marks the rows of a file's diff whose edits the change did

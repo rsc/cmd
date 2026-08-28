@@ -1083,6 +1083,24 @@ func TestCarryReviewedStopsAtRewordedMessage(t *testing.T) {
 	}
 }
 
+// TestMessageChangeIDIsNotAChange checks that a Change-Id trailer arriving
+// in a commit message does not ask for the message to be read again. The
+// tool that mails a change writes it there; the message says what it said
+// before, and mailing a change must not undo the reading of it.
+func TestMessageChangeIDIsNotAChange(t *testing.T) {
+	before := &Change{Message: "subject\n\nThe body.\n", Parent: "abc", ParentKey: "Ibelow"}
+	mailed := &Change{Message: "subject\n\nThe body.\n\nChange-Id: I123\n", Parent: "abc", ParentKey: "Ibelow"}
+	if !sameMessage("git", before, mailed) {
+		t.Errorf("a Change-Id arriving counted as a changed message:\n%s\n--- and ---\n%s",
+			msgWithoutParents("git", before), msgWithoutParents("git", mailed))
+	}
+	// The other half: what the message says still counts.
+	reworded := &Change{Message: "subject\n\nA different body.\n\nChange-Id: I123\n", Parent: "abc", ParentKey: "Ibelow"}
+	if sameMessage("git", mailed, reworded) {
+		t.Error("a reworded message did not count as changed")
+	}
+}
+
 // TestSpreadMarksSettlesFileMarks checks that the file marks are settled
 // along the chain and not only when a snapshot is first recorded, so that
 // grabbing repairs a chain recorded by an older binary.
