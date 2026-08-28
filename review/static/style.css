@@ -372,7 +372,7 @@ button.reviewed.lgtm.on:hover { background: var(--gerrit-blue-light); }
 	padding: 0;
 	overflow: hidden;
 }
-.graphcell .line, .graphcell .corner, .graphcell .node {
+.graphcell .line, .graphcell .corner, .graphcell .node, .graphcell .dot {
 	position: absolute;
 	box-sizing: border-box;
 }
@@ -404,9 +404,23 @@ button.reviewed.lgtm.on:hover { background: var(--gerrit-blue-light); }
 	border-bottom-right-radius: 7px;
 }
 
+/* Three of these stand in for each line of the changes left out at a
+   trimmed end of a chain: the line goes on past what is drawn. */
+.graphcell .dot {
+	width: 3px;
+	height: 3px;
+	border-radius: 50%;
+	background: var(--gray-500);
+}
+
 /* A join row carries nothing but graph, so it is only as tall as the turn
    drawn in it needs. */
 .relchain li.joinrow { min-height: 14px; }
+/* Clicking anywhere along the dots asks for that end of the chain whole,
+   so the link covers the row rather than only the dots themselves. */
+.relchain li.morerow { min-height: 17px; align-items: stretch; }
+.relchain li.morerow > a { display: flex; align-items: stretch; flex: 1 1 auto; }
+.relchain li.morerow:hover { background: var(--gray-50); }
 tr.joinrow > td { height: 14px; padding: 0; border-bottom: none; }
 /* The lines have to reach the rows above and below, so the graph column
    takes no padding and no rule of its own. */

@@ -34,17 +34,26 @@
     {{end}}
     {{if .Chain}}
     <section class="relchain">
-      <h3>Relation chain</h3>
       <ul>
         {{range .Chain}}
-        <li class="{{if .Self}}sel{{end}}{{if not .Change}}joinrow{{end}}">
+        {{if .More}}
+        <li class="morerow">
+          <a href="{{.URL}}" title="show the rest of the chain this way">
+            <span class="graphcell" style="width:{{.Width}}px">{{.Graph}}</span>
+          </a>
+        </li>
+        {{else if .Change}}
+        <li class="{{if .Self}}sel{{end}}">
           <span class="graphcell" style="width:{{.Width}}px">{{.Graph}}</span>
-          {{if .Change}}
           <a href="{{.URL}}" title="{{.Subject}}">{{.Subject}}</a>
           {{if and .Working (not .Current)}}<span class="chip working">uncommitted</span>{{end}}
           {{if .Current}}<span class="chip current">working copy</span>{{end}}
-          {{end}}
         </li>
+        {{else}}
+        <li class="joinrow">
+          <span class="graphcell" style="width:{{.Width}}px">{{.Graph}}</span>
+        </li>
+        {{end}}
         {{end}}
       </ul>
     </section>

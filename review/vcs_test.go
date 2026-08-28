@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -756,6 +757,59 @@ func TestGraph(t *testing.T) {
 			got := chainDraw(t, graph(tt.changes))
 			if got != tt.want {
 				t.Errorf("graph:\n%s\nwant:\n%s", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestChainWindow checks the window a long chain is trimmed to: the change
+// being viewed with chainSide of them either side, an end short of that
+// leaving the rest to the other, and a row standing for what was left out
+// at each end that was trimmed.
+func TestChainWindow(t *testing.T) {
+	// A stack of twenty on main, newest first, as a change list has them.
+	var pairs []string
+	for i := 19; i > 0; i-- {
+		pairs = append(pairs, fmt.Sprintf("c%02d c%02d", i, i-1))
+	}
+	pairs = append(pairs, "c00 main")
+	changes := chainChanges(pairs...)
+
+	for _, tt := range []struct {
+		at       string
+		up, down bool
+		want     []string // the changes shown, newest first
+		more     int      // rows standing for changes left out
+	}{
+		{at: "c10", want: []string{"c15", "c14", "c13", "c12", "c11", "c10", "c09", "c08", "c07", "c06", "c05"}, more: 2},
+		// Nothing above the tip, so the whole window goes below it.
+		{at: "c19", want: []string{"c19", "c18", "c17", "c16", "c15", "c14", "c13", "c12", "c11", "c10", "c09"}, more: 1},
+		// And nothing below the oldest.
+		{at: "c00", want: []string{"c10", "c09", "c08", "c07", "c06", "c05", "c04", "c03", "c02", "c01", "c00"}, more: 1},
+		// Asking for one end whole leaves the other end trimmed.
+		{at: "c19", down: true, want: nil, more: 0},
+		{at: "c10", up: true, want: []string{"c19", "c18", "c17", "c16", "c15", "c14", "c13", "c12", "c11", "c10", "c09", "c08", "c07", "c06", "c05"}, more: 1},
+	} {
+		t.Run(tt.at, func(t *testing.T) {
+			rows := window(chain(changes, &Change{Rev: tt.at}), tt.at, tt.up, tt.down)
+			var got []string
+			more := 0
+			for _, r := range rows {
+				switch {
+				case r.More:
+					more++
+				case r.Change != nil:
+					got = append(got, r.Rev)
+				}
+			}
+			if tt.want != nil && !slices.Equal(got, tt.want) {
+				t.Errorf("window at %s = %v, want %v", tt.at, got, tt.want)
+			}
+			if tt.want == nil && len(got) != 20 {
+				t.Errorf("window at %s shows %d changes, want the whole chain of 20", tt.at, len(got))
+			}
+			if more != tt.more {
+				t.Errorf("window at %s has %d rows for changes left out, want %d", tt.at, more, tt.more)
 			}
 		})
 	}

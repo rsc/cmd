@@ -102,6 +102,11 @@ type GraphRow struct {
 	// Join, on a join row, is the lane whose line ends here, curving left
 	// into Col. It is -1 on a change's row.
 	Join int
+
+	// More reports that this row stands for the changes left out at one
+	// end of a chain that was trimmed. Its lanes are the ones whose lines
+	// cross the cut, drawn running on past it. See window.
+	More bool
 }
 
 // chain returns the changes connected to c by parent links: the stack c
@@ -158,6 +163,108 @@ func chain(changes []*Change, c *Change) []GraphRow {
 		}
 	}
 	return graph(stack)
+}
+
+// The relation chain shows at most chainMax changes: the one being viewed,
+// chainSide of them above it and chainSide below. Where one side has fewer
+// than its share, the other takes what is left over, so that the chain is
+// as long as it is allowed to be wherever there is enough of it to be.
+const (
+	chainSide = 5
+	chainMax  = 2*chainSide + 1
+)
+
+// window trims a chain to the changes nearest the one being viewed, at
+// rev. An end named by up or down is left whole instead, which is what
+// clicking the ... at a trimmed end asks for.
+//
+// A trimmed end gets a row of its own standing for what was left out,
+// carrying the lanes whose lines cross the cut so that the graph shows
+// them running on past it rather than stopping there.
+func window(rows []GraphRow, rev string, up, down bool) []GraphRow {
+	self, above, below := -1, 0, 0
+	for i, r := range rows {
+		switch {
+		case r.Change == nil:
+		case r.Rev == rev:
+			self = i
+		case self < 0:
+			above++
+		default:
+			below++
+		}
+	}
+	if self < 0 {
+		return rows
+	}
+
+	takeAbove, takeBelow := min(above, chainSide), min(below, chainSide)
+	// A side with fewer than its share leaves the rest to the other.
+	if spare := chainMax - 1 - takeAbove - takeBelow; spare > 0 {
+		if takeAbove == above {
+			takeBelow = min(below, takeBelow+spare)
+		} else {
+			takeAbove = min(above, takeAbove+spare)
+		}
+	}
+	if up {
+		takeAbove = above
+	}
+	if down {
+		takeBelow = below
+	}
+	if takeAbove == above && takeBelow == below {
+		return rows
+	}
+
+	lo, hi := self, self
+	for n := takeAbove; n > 0; {
+		lo--
+		if rows[lo].Change != nil {
+			n--
+		}
+	}
+	for n := takeBelow; n > 0; {
+		hi++
+		if rows[hi].Change != nil {
+			n--
+		}
+	}
+	out := append([]GraphRow{}, rows[lo:hi+1]...)
+	if takeAbove < above {
+		out = append([]GraphRow{more(out[0], true)}, out...)
+	}
+	if takeBelow < below {
+		out = append(out, more(out[len(out)-1], false))
+	}
+
+	// A lane only the changes left out were using would draw an empty
+	// column, so the width is taken from what is left rather than kept.
+	w := 0
+	for _, r := range out {
+		w = max(w, r.Col+1, r.Join+1)
+		for i, on := range r.Lanes {
+			if on {
+				w = max(w, i+1)
+			}
+		}
+	}
+	for i := range out {
+		out[i].Lanes = out[i].Lanes[:w]
+	}
+	return out
+}
+
+// more returns the row standing for the changes left out beyond r, which
+// is the first row of the window when above is set and the last when it
+// is not. Every line crossing the cut is carried into it, the change's
+// own included.
+func more(r GraphRow, above bool) GraphRow {
+	m := GraphRow{More: true, Col: -1, Join: -1, Lanes: slices.Clone(r.Lanes)}
+	if above && r.Up || !above && r.Down {
+		m.Lanes[r.Col] = true
+	}
+	return m
 }
 
 // graph draws a set of changes as jj log draws one. Each line of

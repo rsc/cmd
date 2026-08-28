@@ -743,6 +743,13 @@ type chainRow struct {
 const (
 	laneW = 13
 	laneX = 6 // the line's own pixel, left of the lane's middle
+
+	// A row standing for the changes left out at a trimmed end of a chain
+	// is this tall, and holds three dots down each line crossing it. The
+	// height is in the stylesheet too, as .morerow's.
+	moreH  = 17
+	dotY   = 2
+	dotGap = 5
 )
 
 // Width is how wide the row's graph is, in pixels. Every row of a graph
@@ -762,12 +769,27 @@ func (r *GraphRow) Graph() template.HTML {
 	span := func(class string, x, w int) {
 		fmt.Fprintf(&b, `<span class="%s" style="left:%dpx;width:%dpx"></span>`, class, x, w)
 	}
+	dot := func(x, y int) {
+		fmt.Fprintf(&b, `<span class="dot" style="left:%dpx;top:%dpx"></span>`, x, y)
+	}
+	// Every branch whose line runs the whole height of the row. Where the
+	// row stands for changes left out, the line goes down it as three dots
+	// instead: it reaches nothing here, it only carries on past.
 	for lane, on := range r.Lanes {
-		if on {
+		switch {
+		case !on:
+		case r.More:
+			for y := dotY; y < moreH; y += dotGap {
+				dot(lane*laneW+laneX-1, y)
+			}
+		default:
 			span("line", lane*laneW+laneX, 1)
 		}
 	}
 	switch {
+	case r.More:
+		// The dots are the whole row: nothing of the graph begins or ends
+		// in one, which is the point of it.
 	case r.Change == nil:
 		// The lane joined into carries on down to the change both are
 		// waiting for; the one joining it ends here, curving into it. The
@@ -902,14 +924,24 @@ func (s *server) files(w http.ResponseWriter, req *http.Request, r *Review) erro
 	p.Drafts = countDrafts(threads)
 
 	// The stack the change sits in, so that moving up and down it does not
-	// mean going back to the change list to find where this one was.
+	// mean going back to the change list to find where this one was. Only
+	// the near end of a long one is shown, unless this page was asked for
+	// with an end whole.
 	entries, err := r.Chain(c)
 	if err != nil {
 		return err
 	}
-	for _, e := range entries {
+	chain := req.FormValue("chain")
+	up, down := chain == "up" || chain == "all", chain == "down" || chain == "all"
+	for i, e := range window(entries, c.Rev, up, down) {
 		row := &chainRow{GraphRow: e}
-		if e.Change != nil {
+		switch {
+		case e.More:
+			// Only the first and last rows can stand for changes left out,
+			// so where this one is says which end it belongs to. Clicking
+			// it asks for that end whole and leaves the other as it is.
+			row.URL = chainURL(p.PageURL, base, target, i == 0 || up, i != 0 || down)
+		case e.Change != nil:
 			row.URL = s.filesURL(r, e.Key, "", "")
 			row.Self = e.Key == c.Key
 		}
@@ -993,6 +1025,31 @@ func (s *server) inlineURL(r *Review, key, file, base, target string) string {
 		q.Set("s", target)
 	}
 	return "/" + url.PathEscape(r.Name) + "/f/inline?" + q.Encode()
+}
+
+// chainURL is this page's URL with the relation chain asked for whole at
+// one end, the other end left as it already was. It is what the ... at a
+// trimmed end links to.
+func chainURL(page, base, target string, up, down bool) string {
+	q := url.Values{}
+	if base != "" {
+		q.Set("base", base)
+	}
+	if target != "" {
+		q.Set("s", target)
+	}
+	switch {
+	case up && down:
+		q.Set("chain", "all")
+	case up:
+		q.Set("chain", "up")
+	case down:
+		q.Set("chain", "down")
+	}
+	if len(q) == 0 {
+		return page
+	}
+	return page + "?" + q.Encode()
 }
 
 func (s *server) filesURL(r *Review, key, base, target string) string {
