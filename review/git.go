@@ -5,6 +5,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -313,28 +314,95 @@ const reviewNotesRef = "refs/notes/review-key"
 // recorded for each. One call reads the whole repository's worth, which
 // changeKey then just looks up per commit, rather than shelling out once
 // per commit for what is normally a short list.
+//
+// Two commands read all of it, however long the list has grown: naming a
+// note's commit is one thing and reading what is in it is another, and
+// git will only do the second in bulk if it is handed the objects.
 func (r *gitRepo) noteKeys() map[string]string {
 	out, err := run(r.root, "git", "notes", "--ref="+reviewNotesRef, "list")
 	if err != nil {
 		return nil
 	}
-	var keys map[string]string
+	// Which note is on which commit, and the notes to read. A note
+	// carried forward across an amend leaves the commit it came from
+	// holding one too, and two notes saying the same thing are one object:
+	// the commits cannot be looked up by the note they share, only the
+	// other way about.
+	type note struct{ blob, rev string }
+	var notes []note
+	seen := make(map[string]bool)
+	var blobs []string
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		f := strings.Fields(line)
 		if len(f) != 2 {
 			continue
 		}
 		blob, rev := f[0], f[1]
-		content, err := run(r.root, "git", "cat-file", "blob", blob)
-		if err != nil {
+		notes = append(notes, note{blob, rev})
+		if !seen[blob] {
+			seen[blob] = true
+			blobs = append(blobs, blob)
+		}
+	}
+	if len(blobs) == 0 {
+		return nil
+	}
+	objs := catFile(r.root, blobs)
+	var keys map[string]string
+	for _, n := range notes {
+		content, ok := objs[n.blob]
+		if !ok {
 			continue
 		}
 		if keys == nil {
 			keys = map[string]string{}
 		}
-		keys[rev] = strings.TrimSpace(string(content))
+		keys[n.rev] = strings.TrimSpace(string(content))
 	}
 	return keys
+}
+
+// catFile returns the contents of every object named, by object ID. One
+// git process reads them all: a process apiece costs milliseconds each in
+// startup alone, which a repository with a few hundred notes in it spends
+// on the way to every page.
+//
+// An object that cannot be read is left out of the result rather than
+// reported. A note nobody can read is a commit whose key is not known,
+// which is what a commit that never had a note looks like too, and the
+// caller has no more to say about either.
+func catFile(dir string, oids []string) map[string][]byte {
+	stdin := []byte(strings.Join(oids, "\n") + "\n")
+	out, err := runIn(dir, stdin, "git", "cat-file", "--batch")
+	if err != nil {
+		return nil
+	}
+	// Each object arrives as a header line naming it, its type and the
+	// size of what follows, then that many bytes and a newline. A header
+	// of two fields is git reporting the object missing, with no content
+	// to skip past.
+	objs := make(map[string][]byte, len(oids))
+	for len(out) > 0 {
+		nl := bytes.IndexByte(out, '\n')
+		if nl < 0 {
+			break
+		}
+		head := strings.Fields(string(out[:nl]))
+		out = out[nl+1:]
+		if len(head) != 3 {
+			continue
+		}
+		size, err := strconv.Atoi(head[2])
+		if err != nil || size > len(out) {
+			break
+		}
+		objs[head[0]] = out[:size]
+		out = out[size:]
+		if len(out) > 0 && out[0] == '\n' {
+			out = out[1:]
+		}
+	}
+	return objs
 }
 
 // EnsureStableKey mints a key for rev and records it in a git note under

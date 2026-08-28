@@ -552,8 +552,16 @@ func subject(msg string) string {
 
 // run runs a command in dir and returns its standard output.
 func run(dir string, args ...string) ([]byte, error) {
+	return runIn(dir, nil, args...)
+}
+
+// runIn is run with stdin on the command's standard input.
+func runIn(dir string, stdin []byte, args ...string) ([]byte, error) {
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Dir = dir
+	if stdin != nil {
+		cmd.Stdin = bytes.NewReader(stdin)
+	}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
