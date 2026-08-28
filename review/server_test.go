@@ -126,12 +126,21 @@ func TestServerAllRepos(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Both rows are dated by their newest snapshot, and what is under test
+	// is the tie-break between two snapshots taken in the same second.
+	// Whether the two calls above landed in the same second is up to the
+	// clock and the load on the machine, so say it outright rather than
+	// hope for it. Both repositories share the one database.
+	if _, err := r.DB.sql.Exec("UPDATE snapshot SET created = ?", 1000000000); err != nil {
+		t.Fatal(err)
+	}
+
 	body := mustGet(t, s, "/")
 	if !strings.Contains(body, "add a.go") || !strings.Contains(body, "add b.go") {
 		t.Fatalf("home page does not list both repositories:\n%s", body)
 	}
-	// Most recently snapshotted first. Both were snapshotted in the same
-	// second, so this is the tie-break at work: the newer commit wins.
+	// Most recently snapshotted first, and with the times equal this is the
+	// tie-break at work: the newer commit wins.
 	if i, j := strings.Index(body, "add b.go"), strings.Index(body, "add a.go"); i > j {
 		t.Error("changes are not sorted with the most recent first")
 	}
