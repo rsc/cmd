@@ -230,8 +230,13 @@ func cmdSkill(args []string) {
 	// An explicit destination overrides detection entirely.
 	if *outDir != "" {
 		path := filepath.Join(*outDir, "SKILL.md")
-		if err := writeSkill(path); err != nil {
+		ok, err := writeSkill(path)
+		if err != nil {
 			log.Fatal(err)
+		}
+		if !ok {
+			fmt.Fprintf(stderr, "review: not overwriting existing %s\n", path)
+			return
 		}
 		fmt.Fprintf(stdout, "wrote %s\n", path)
 		return
@@ -289,8 +294,13 @@ func cmdSkill(args []string) {
 		add(skill, t.Name)
 	}
 	for _, path := range order {
-		if err := writeSkill(path); err != nil {
+		ok, err := writeSkill(path)
+		if err != nil {
 			log.Fatal(err)
+		}
+		if !ok {
+			fmt.Fprintf(stderr, "review: not overwriting existing %s\n", path)
+			continue
 		}
 		fmt.Fprintf(stdout, "%s: wrote %s\n", strings.Join(serves[path], ", "), path)
 	}
@@ -366,12 +376,13 @@ func updateSkills() (wrote, kept []string) {
 		if err != nil || string(data) == want {
 			continue
 		}
-		if !ourSkill(data) {
-			kept = append(kept, path)
+		ok, err := writeSkill(path)
+		if err != nil {
+			log.Printf("updating skill at %s: %v", path, err)
 			continue
 		}
-		if err := writeSkill(path); err != nil {
-			log.Printf("updating skill at %s: %v", path, err)
+		if !ok {
+			kept = append(kept, path)
 			continue
 		}
 		wrote = append(wrote, path)
@@ -379,9 +390,14 @@ func updateSkills() (wrote, kept []string) {
 	return wrote, kept
 }
 
-func writeSkill(path string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0777); err != nil {
-		return err
+// writeSkill writes the skill to path, unless what is already there is
+// not review's own to replace: see ourSkill. It reports whether it wrote.
+func writeSkill(path string) (bool, error) {
+	if data, err := os.ReadFile(path); err == nil && !ourSkill(data) {
+		return false, nil
 	}
-	return os.WriteFile(path, []byte(skillText()), 0666)
+	if err := os.MkdirAll(filepath.Dir(path), 0777); err != nil {
+		return false, err
+	}
+	return true, os.WriteFile(path, []byte(skillText()), 0666)
 }

@@ -421,11 +421,15 @@ has. A file that is not there stays not there, so this never installs
 instructions nobody asked for, and one that already matches is left alone
 rather than rewritten.
 
-It rewrites only what it wrote. A file review is to bring up to date must
-hash to a text review has written, which a copy nobody has touched does;
-a skill written by hand under that name, or this one after it was edited,
-is somebody else's, and starting the server says it is there and leaves
-it as it is. Installing over one is still allowed, being asked for.
+Neither installing nor updating writes over what review did not write. A
+file review is to replace must hash to a text review has written, which a
+copy nobody has touched does; a skill written by hand under that name, or
+this one after it was edited, is somebody else's. Starting the server says
+such a file is there and leaves it as it is, and installing refuses:
+
+	review: not overwriting existing ~/.claude/skills/review/SKILL.md
+
+Move it aside to install over it.
 
 The -project flag writes the same things into the repository instead, so
 that they travel with the code, at each tool's own workspace path: Claude

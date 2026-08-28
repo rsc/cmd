@@ -24,6 +24,58 @@ func captureOut(t *testing.T) *bytes.Buffer {
 	return &buf
 }
 
+// captureErr redirects the command's error output for the duration of a
+// test, the way captureOut does its output.
+func captureErr(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	old := stderr
+	stderr = &buf
+	t.Cleanup(func() { stderr = old })
+	return &buf
+}
+
+// TestSkillInstallRefusesToOverwrite checks that installing does not take
+// a skill somebody wrote for themselves under the name review and replace
+// it with this one. Being asked to install is not being told that file is
+// review's to have.
+func TestSkillInstallRefusesToOverwrite(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "SKILL.md")
+	const mine = "my own instructions\n"
+	if err := os.WriteFile(path, []byte(mine), 0666); err != nil {
+		t.Fatal(err)
+	}
+
+	out, errOut := captureOut(t), captureErr(t)
+	cmdSkill([]string{"-install", "-o", dir})
+
+	if data, err := os.ReadFile(path); err != nil {
+		t.Fatal(err)
+	} else if string(data) != mine {
+		t.Errorf("installing overwrote a skill review did not write:\n%s", data)
+	}
+	if want := "review: not overwriting existing " + path + "\n"; errOut.String() != want {
+		t.Errorf("said %q, want %q", errOut.String(), want)
+	}
+	if strings.Contains(out.String(), "wrote") {
+		t.Errorf("installing claimed to write: %q", out.String())
+	}
+
+	// Over one of review's own it writes as it always did.
+	if err := os.WriteFile(path, []byte(skillText()), 0666); err != nil {
+		t.Fatal(err)
+	}
+	out, errOut = captureOut(t), captureErr(t)
+	cmdSkill([]string{"-install", "-o", dir})
+	if !strings.Contains(out.String(), "wrote "+path) {
+		t.Errorf("installing over review's own skill said %q", out.String())
+	}
+	if errOut.Len() != 0 {
+		t.Errorf("installing over review's own skill complained: %q", errOut.String())
+	}
+}
+
 func TestSkillPrint(t *testing.T) {
 	out := captureOut(t)
 	cmdSkill(nil)
