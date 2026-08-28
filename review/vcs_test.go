@@ -832,7 +832,74 @@ func TestChainEnds(t *testing.T) {
 	}
 }
 
-// TestJJRootParent checks that the virtual root commit, which has a change
+func TestCLNumber(t *testing.T) {
+	for _, tt := range []struct{ name, want string }{
+		{"cl/12345", "12345"},          // the change
+		{"cl/12345/2", "12345"},        // the second patch set uploaded
+		{"cl/12345/2@review", "12345"}, // and as read back from the remote
+		{"cl/12345@git", "12345"},
+		{"main", ""},
+		{"cl/", ""},
+		{"cl/nonumber", ""},
+		{"cl/12345x/2", ""},
+	} {
+		if got := clNumber(tt.name); got != tt.want {
+			t.Errorf("clNumber(%q) = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
+// TestJJGerritCL checks that a change uploaded to Gerrit is labelled with
+// the change it went up as. What was uploaded is a commit of its own, kept
+// under a bookmark naming the patch set; the Change-Id is what it and the
+// commit it was made from still have in common.
+func TestJJGerritCL(t *testing.T) {
+	dir := newJJRepo(t)
+	do(t, dir, "jj", "config", "set", "--repo", `template-aliases."gerriturl()"`, "https://gerrit.example.com")
+	write(t, dir, "a.txt", "one\n")
+	do(t, dir, "jj", "describe", "-m", "the change\n\nChange-Id: Iabc123\n")
+	live := strings.TrimSpace(do(t, dir, "jj", "log", "-r", "@", "--no-graph", "-T", "commit_id"))
+
+	at := func(rev string) *Change {
+		t.Helper()
+		r, err := OpenRepo(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		changes, err := r.Changes()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range changes {
+			if c.Rev == rev {
+				return c
+			}
+		}
+		t.Fatalf("no change at %s in %+v", rev, changes)
+		return nil
+	}
+
+	// Nothing has been uploaded, so there is no change to name.
+	if c := at(live); c.CL != "" || c.CLURL != "" {
+		t.Fatalf("before uploading, CL = %q, %q, want empty", c.CL, c.CLURL)
+	}
+
+	// Upload it: what jj-codereview leaves behind is a copy of the commit,
+	// under a bookmark naming the patch set.
+	do(t, dir, "jj", "new", "root()", "-m", "the change\n\nChange-Id: Iabc123\n")
+	sent := strings.TrimSpace(do(t, dir, "jj", "log", "-r", "@", "--no-graph", "-T", "commit_id"))
+	do(t, dir, "jj", "bookmark", "create", "cl/12345/1", "-r", sent)
+
+	c := at(live)
+	if c.CL != "12345" {
+		t.Errorf("CL = %q, want 12345", c.CL)
+	}
+	if want := "https://gerrit.example.com/12345"; c.CLURL != want {
+		t.Errorf("CLURL = %q, want %q", c.CLURL, want)
+	}
+}
+
+// TestJJRootParent checks that the virtual root commit, which has a change// TestJJRootParent checks that the virtual root commit, which has a change
 // ID like any other jj commit, is not named as a parent: there is no change
 // there to have moved.
 func TestJJRootParent(t *testing.T) {

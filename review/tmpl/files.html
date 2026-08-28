@@ -45,7 +45,7 @@
         {{else if .Change}}
         <li class="{{if .Self}}sel{{end}}">
           <span class="graphcell" style="width:{{.Width}}px">{{.Graph}}</span>
-          <a href="{{.URL}}" title="{{.Subject}}">{{.Subject}}</a>
+          {{template "cl" .}}<a href="{{.URL}}" title="{{.Subject}}">{{.Subject}}</a>
           {{if and .Working (not .Current)}}<span class="chip working">uncommitted</span>{{end}}
           {{if .Current}}<span class="chip current">working copy</span>{{end}}
         </li>

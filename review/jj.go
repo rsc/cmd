@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -33,6 +34,13 @@ const jjDiffTemplate = `self.status_char() ++ "\0" ++ ` +
 // A jjRepo is a jj repository.
 type jjRepo struct {
 	root string
+
+	// The Gerrit changes the repository's commits have been uploaded as,
+	// read once and kept: a page draws many changes and they all want the
+	// same answer. See cls.
+	clsOnce sync.Once
+	cls     map[string]string // Change-Id trailer -> CL number
+	clsBase string            // the URL those numbers live under
 }
 
 func (r *jjRepo) Kind() string { return "jj" }
@@ -73,15 +81,111 @@ func (r *jjRepo) Changes() ([]*Change, error) {
 	if err != nil {
 		return nil, err
 	}
+	cls, base := r.gerritCLs()
 	var changes []*Change
 	for _, rec := range records(out, 1) {
 		c, err := parseJJCommit(rec)
 		if err != nil {
 			return nil, err
 		}
+		if n := cls[changeIDTrailer(c.Message)]; n != "" {
+			c.CL, c.CLURL = n, base+"/"+n
+		}
 		changes = append(changes, c)
 	}
 	return changes, nil
+}
+
+// clBookmarks is the revset of the commits carrying a bookmark that names
+// a Gerrit change: jj-codereview writes cl/12345 for the change itself and
+// cl/12345/2 for each patch set it uploads. A glob does not match across
+// the slash in the second, so the names are matched by regexp.
+const clBookmarks = `bookmarks(regex:"^cl/") | remote_bookmarks(regex:"^cl/")`
+
+// jjCLTemplate reports a commit's bookmarks and the Change-Id in its
+// message, and nothing else: the messages are long and only that one line
+// of them is wanted.
+const jjCLTemplate = `bookmarks ++ "\0" ++ ` +
+	`description.lines().filter(|l| l.starts_with("Change-Id:")).join(" ") ++ "\x01"`
+
+// gerritCLs returns the number of the Gerrit change each commit has been
+// uploaded as, keyed by the Change-Id in its message, along with the URL
+// those numbers live under.
+//
+// It is the uploaded copy of a commit that carries the number, under a
+// bookmark of its own. The commit it was made from has been amended and
+// rebased since and is no longer that commit; the Change-Id is what the
+// two still have in common, so it is what the numbers are keyed by.
+//
+// A repository whose commits do not go to Gerrit says so by not naming a
+// Gerrit at all, which is asked first because it is a question about the
+// configuration rather than about the repository, and costs accordingly.
+func (r *jjRepo) gerritCLs() (map[string]string, string) {
+	r.clsOnce.Do(func() {
+		r.cls = map[string]string{}
+		if r.clsBase = r.gerritURL(); r.clsBase == "" {
+			return
+		}
+		out, err := run(r.root, "jj", "log", "-r", clBookmarks, "--no-graph", "-T", jjCLTemplate)
+		if err != nil {
+			return
+		}
+		for _, rec := range records(out, 1) {
+			f := strings.SplitN(rec, "\x00", 2)
+			if len(f) != 2 {
+				continue
+			}
+			id := changeIDTrailer(f[1])
+			if id == "" {
+				continue
+			}
+			for _, name := range strings.Fields(f[0]) {
+				if n := clNumber(name); n != "" {
+					r.cls[id] = n
+					break
+				}
+			}
+		}
+	})
+	return r.cls, r.clsBase
+}
+
+// gerritURL returns the base URL of the Gerrit server the repository's
+// changes are reviewed on, which jj-codereview keeps in a template alias
+// so that its own log templates can link to it. The alias holds a template
+// expression, which for a plain URL is the URL in quotes.
+func (r *jjRepo) gerritURL() string {
+	out, err := run(r.root, "jj", "config", "get", `template-aliases."gerriturl()"`)
+	if err != nil {
+		return ""
+	}
+	url := strings.Trim(strings.TrimSpace(string(out)), `"`)
+	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+		return ""
+	}
+	return strings.TrimSuffix(url, "/")
+}
+
+// clNumber returns the Gerrit change number a bookmark names, or "" if it
+// names something else. A bookmark is cl/12345 for the change and
+// cl/12345/2 for the second patch set uploaded, and a bookmark read from a
+// remote arrives with @ and the remote's name on the end.
+func clNumber(name string) string {
+	name, _, _ = strings.Cut(name, "@")
+	rest, ok := strings.CutPrefix(name, "cl/")
+	if !ok {
+		return ""
+	}
+	num, _, _ := strings.Cut(rest, "/")
+	if num == "" {
+		return ""
+	}
+	for _, c := range num {
+		if c < '0' || c > '9' {
+			return ""
+		}
+	}
+	return num
 }
 
 func (r *jjRepo) Commit(rev string) (*Change, error) {

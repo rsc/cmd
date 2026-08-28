@@ -189,13 +189,8 @@ func parseGitCommit(rec string, notes map[string]string) (*Change, error) {
 // has snapshotted it before; otherwise the commit hash, which survives
 // neither an amend nor, until something snapshots it, a rebase.
 func changeKey(rev, msg string, notes map[string]string) string {
-	for line := range strings.Lines(msg) {
-		line = strings.TrimSpace(line)
-		if id, ok := strings.CutPrefix(line, "Change-Id:"); ok {
-			if id = strings.TrimSpace(id); id != "" {
-				return id
-			}
-		}
+	if id := changeIDTrailer(msg); id != "" {
+		return id
 	}
 	if key, ok := notes[rev]; ok {
 		return key

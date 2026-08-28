@@ -219,6 +219,19 @@ tr.item:hover > td { background: var(--gray-50); }
 .filelist .delta .minus { color: var(--red-700); }
 .filelist .counts .chip + .chip,
 .changelist .counts .chip + .chip { margin-left: 6px; }
+/* The Gerrit change a commit has been uploaded as, beside its subject in
+   every list, in the color and the type jj log gives a bookmark. It is a
+   link to somewhere else entirely, so it does not take the subject's own
+   color, which the longer selectors are there to say. */
+.cl {
+	font-family: var(--mono);
+	font-size: 12px;
+	white-space: nowrap;
+}
+.cl,
+.changelist .subject a.cl,
+.relchain li.sel a.cl { color: var(--purple-900); font-weight: normal; }
+.relchain li a.cl { flex: none; }
 .changelist .pick { width: 24px; }
 .changelist .repo { white-space: nowrap; }
 .changelist .repo a { color: var(--gray-700); font-family: var(--mono); font-size: 12px; }

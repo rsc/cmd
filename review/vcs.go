@@ -51,6 +51,13 @@ type Change struct {
 	Message string    // full commit message
 	Author  string    // "Name <email>"
 	Date    time.Time // author date
+
+	// CL is the number of the Gerrit change this commit has been uploaded
+	// as, and CLURL is where that change is. Both are empty until it has
+	// been uploaded, and in a repository not being reviewed in Gerrit.
+	CL    string
+	CLURL string
+
 	// Working reports that this change has nothing of its own yet to
 	// snapshot: git's synthetic uncommitted-working-tree change, or jj's
 	// working-copy commit while it is still empty and undescribed — the
@@ -536,6 +543,23 @@ func commitMsgContent(kind string, c *Change) []byte {
 	b.WriteString(strings.TrimRight(msg, "\n"))
 	b.WriteString("\n")
 	return []byte(b.String())
+}
+
+// changeIDTrailer returns the Change-Id trailer of a commit message, or
+// "" if it has none. Gerrit writes one into every change it is sent, and
+// it stays put through the amends and rebases that give the commit a new
+// hash, which makes it the one name an uploaded copy of a commit and the
+// commit it was made from still have in common.
+func changeIDTrailer(msg string) string {
+	for line := range strings.Lines(msg) {
+		line = strings.TrimSpace(line)
+		if id, ok := strings.CutPrefix(line, "Change-Id:"); ok {
+			if id = strings.TrimSpace(id); id != "" {
+				return id
+			}
+		}
+	}
+	return ""
 }
 
 // subject returns the first line of a commit message.

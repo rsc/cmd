@@ -15,7 +15,7 @@
           data-filter="{{.Repo.Name}} {{.Subject}} {{.Author}} {{.ShortRev}}">
         <td class="repo"><a href="{{.Repo.URL}}" title="{{.Repo.Path}}">{{.Repo.Name}}</a></td>
         <td class="subject">
-          <a href="{{.URL}}">{{.Subject}}</a>
+          {{template "cl" .}}<a href="{{.URL}}">{{.Subject}}</a>
           {{if and .Working (not .Current)}}<span class="chip working">uncommitted</span>{{end}}
           {{if .Current}}<span class="chip current">working copy</span>{{end}}
         </td>

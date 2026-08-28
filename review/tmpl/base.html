@@ -26,6 +26,10 @@
 </header>
 {{end}}
 
+{{/* cl links a change to the Gerrit change it has been uploaded as, and
+     draws nothing at all for one that has not been. */}}
+{{define "cl"}}{{if .CL}}<a class="cl" href="{{.CLURL}}" title="{{.CLURL}}">cl/{{.CL}}</a> {{end}}{{end}}
+
 {{define "foot"}}
 <dialog id="help">{{template "help" .}}</dialog>
 <div id="navbar" hidden></div>
