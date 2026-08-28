@@ -581,6 +581,12 @@ func subject(msg string) string {
 
 // run runs a command in dir and returns its standard output.
 func run(dir string, args ...string) ([]byte, error) {
+	return runInput(dir, "", args...)
+}
+
+// runInput runs a command in dir with input on its standard input and
+// returns its standard output.
+func runInput(dir, input string, args ...string) ([]byte, error) {
 	// Nearly all of the time a page takes is spent in these commands, and
 	// which ones they are depends on the repository and on the change
 	// being looked at. Setting REVIEW_TRACE writes each one and what it
@@ -594,6 +600,9 @@ func run(dir string, args ...string) ([]byte, error) {
 	}
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Dir = dir
+	if input != "" {
+		cmd.Stdin = strings.NewReader(input)
+	}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

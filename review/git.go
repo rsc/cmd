@@ -5,6 +5,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -333,31 +334,79 @@ const reviewNotesRef = "refs/notes/review-key"
 
 // noteKeys reads every note under reviewNotesRef, returning the commit
 // hashes that were still on it as of the last snapshot mapped to the key
-// recorded for each. One call reads the whole repository's worth, which
-// changeKey then just looks up per commit, rather than shelling out once
-// per commit for what is normally a short list.
+// recorded for each. Two calls read the whole repository's worth, which
+// changeKey then just looks up per commit.
 func (r *gitRepo) noteKeys() map[string]string {
 	out, err := run(r.root, "git", "notes", "--ref="+reviewNotesRef, "list")
 	if err != nil {
 		return nil
 	}
-	var keys map[string]string
+	var blobs, revs []string
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		f := strings.Fields(line)
-		if len(f) != 2 {
-			continue
+		if f := strings.Fields(line); len(f) == 2 {
+			blobs = append(blobs, f[0])
+			revs = append(revs, f[1])
 		}
-		blob, rev := f[0], f[1]
-		content, err := run(r.root, "git", "cat-file", "blob", blob)
-		if err != nil {
+	}
+	if len(blobs) == 0 {
+		return nil
+	}
+	var keys map[string]string
+	for i, content := range r.catFile(blobs) {
+		key := strings.TrimSpace(string(content))
+		if key == "" {
 			continue
 		}
 		if keys == nil {
 			keys = map[string]string{}
 		}
-		keys[rev] = strings.TrimSpace(string(content))
+		keys[revs[i]] = key
 	}
 	return keys
+}
+
+// catFile returns the contents of the named objects, in the order they
+// were asked for, with nothing where git had nothing to give. One git
+// process reads them all: a repository gains a note for every commit
+// reviewed that has no Change-Id of its own, and starting a process
+// apiece was most of what listing its changes cost.
+func (r *gitRepo) catFile(names []string) [][]byte {
+	out, err := runInput(r.root, strings.Join(names, "\n")+"\n", "git", "cat-file", "--batch")
+	if err != nil {
+		return make([][]byte, len(names))
+	}
+	// Each object arrives as a line naming it, its type and its size,
+	// then that many bytes, then a newline. A name git does not know
+	// arrives as a line saying so, and stands for nothing at all.
+	objs := make([][]byte, 0, len(names))
+	for len(objs) < len(names) {
+		nl := bytes.IndexByte(out, '\n')
+		if nl < 0 {
+			break
+		}
+		head, rest := string(out[:nl]), out[nl+1:]
+		f := strings.Fields(head)
+		if len(f) != 3 {
+			objs = append(objs, nil)
+			out = rest
+			continue
+		}
+		n, err := strconv.Atoi(f[2])
+		if err != nil || n > len(rest) {
+			break
+		}
+		objs = append(objs, rest[:n])
+		out = rest[n:]
+		if len(out) > 0 && out[0] == '\n' {
+			out = out[1:]
+		}
+	}
+	// Anything git stopped short of is nothing, so that the answer lines
+	// up with what was asked for however it went wrong.
+	for len(objs) < len(names) {
+		objs = append(objs, nil)
+	}
+	return objs
 }
 
 // EnsureStableKey mints a key for rev and records it in a git note under

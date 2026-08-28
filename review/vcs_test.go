@@ -257,6 +257,43 @@ func TestGitStableKeyNoChangeID(t *testing.T) {
 	}
 }
 
+// TestGitStableKeysMany checks that a repository with a note on every
+// commit reads them all back. They are read in one batch, which one note
+// cannot tell apart from a hundred.
+func TestGitStableKeysMany(t *testing.T) {
+	dir := newGitRepo(t)
+	r, err := OpenRepo(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Five commits, none with a Change-Id, each given a key of its own.
+	want := map[string]string{}
+	for i := range 5 {
+		write(t, dir, fmt.Sprintf("f%d.txt", i), "x\n")
+		do(t, dir, "git", "add", ".")
+		do(t, dir, "git", "commit", "-q", "-m", fmt.Sprintf("commit %d, no Change-Id", i))
+		rev := strings.TrimSpace(do(t, dir, "git", "rev-parse", "HEAD"))
+		key, err := r.EnsureStableKey(rev)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want[rev] = key
+	}
+
+	changes, err := r.Changes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != len(want) {
+		t.Fatalf("got %d changes, want %d", len(changes), len(want))
+	}
+	for _, c := range changes {
+		if c.Key != want[c.Rev] {
+			t.Errorf("change %s has key %q, want the one recorded for it, %q", shortRev(c.Rev), c.Key, want[c.Rev])
+		}
+	}
+}
+
 func TestGitWorkingTree(t *testing.T) {
 	dir := newGitRepo(t)
 
