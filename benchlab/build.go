@@ -19,6 +19,9 @@ func (l *Lab) build() error {
 	if _, err := l.runLocal(0, "mkdir", "-p", ".benchlab"); err != nil {
 		return err
 	}
+	if err := l.fs.WriteFile(".benchlab/.gitignore", []byte("*\n"), 0666); err != nil {
+		return err
+	}
 
 	// Don't switch to a new commit if there are pending changes.
 	dirty, err := l.gitDirty()

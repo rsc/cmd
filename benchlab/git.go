@@ -8,7 +8,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"strings"
 )
 
@@ -54,8 +53,6 @@ func (l *Lab) gitResolve() error {
 		}
 	}
 	l.Commits = commits
-
-	fmt.Fprintln(os.Stderr, "RESOLVE", l.Commits)
 	return nil
 }
 
