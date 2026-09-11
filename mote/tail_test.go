@@ -5,13 +5,18 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
 	"net/netip"
 	"os"
 	"strings"
 	"testing"
 
+	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
+	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
+	"tailscale.com/types/persist"
 )
 
 func TestClientTailName(t *testing.T) {
@@ -44,14 +49,132 @@ func TestClientTailName(t *testing.T) {
 					t.Fatal(err)
 				}
 				if loggedIn {
-					if err := os.WriteFile(tailStatePath(name), []byte("state"), 0o600); err != nil {
-						t.Fatal(err)
-					}
+					writeTailState(t, name, testTailState(t, ipn.CurrentProfileStateKey, "profile-test"))
 				}
 			}
 			name, err := clientTailName()
 			if name != tt.want || (err != nil) != tt.wantErr {
 				t.Errorf("clientTailName() = %q, %v; want %q, error=%v", name, err, tt.want, tt.wantErr)
+			}
+		})
+	}
+}
+
+func testTailState(t *testing.T, startStateKey, selected ipn.StateKey) []byte {
+	t.Helper()
+	const profileKey = ipn.StateKey("profile-test")
+	prefs := ipn.NewPrefs()
+	prefs.Persist = &persist.Persist{
+		PrivateNodeKey: key.NewNode(),
+		UserProfile:    tailcfg.UserProfile{LoginName: "tagged-device"},
+		NodeID:         "node-test",
+	}
+	profiles, err := json.Marshal(map[ipn.ProfileID]ipn.LoginProfile{
+		"test": {ID: "test", Key: profileKey, UserProfile: prefs.Persist.UserProfile, NodeID: prefs.Persist.NodeID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(map[ipn.StateKey][]byte{
+		startStateKey:             []byte(selected),
+		ipn.KnownProfilesStateKey: profiles,
+		profileKey:                prefs.ToBytes(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func writeTailState(t *testing.T, name string, data []byte) {
+	t.Helper()
+	if err := os.MkdirAll(tailDir(name), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tailStatePath(name), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTailStateCredentials(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		data     []byte
+		startKey ipn.StateKey
+		want     bool
+		wantErr  bool
+	}{
+		{"partial", []byte(`{"_machinekey":"cGFydGlhbA=="}`), ipn.CurrentProfileStateKey, false, false},
+		{"tagged-id-zero", testTailState(t, ipn.CurrentProfileStateKey, "profile-test"), ipn.CurrentProfileStateKey, true, false},
+		{"windows", testTailState(t, ipn.ServerModeStartKey, "profile-test"), ipn.ServerModeStartKey, true, false},
+		{"non-current", testTailState(t, ipn.CurrentProfileStateKey, "other"), ipn.CurrentProfileStateKey, false, true},
+		{"malformed", []byte("{"), ipn.CurrentProfileStateKey, false, true},
+		{"malformed-profiles", []byte(`{"_profiles":""}`), ipn.CurrentProfileStateKey, false, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tailStateCredentials(tt.data, tt.startKey)
+			if got != tt.want || (err != nil) != tt.wantErr {
+				t.Fatalf("tailStateCredentials = %v, %v; want %v, error=%v", got, err, tt.want, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestTailLoginRetry(t *testing.T) {
+	t.Setenv("MOTECONFIG", t.TempDir())
+	name := "retry"
+	failed := errors.New("registration failed")
+	transient := errors.New("temporary network failure")
+	var keys []string
+	if err := tailLoginWith(name, strings.NewReader("old-key\n"), func(key string) error {
+		keys = append(keys, key)
+		writeTailState(t, name, []byte(`{"_machinekey":"cGFydGlhbA=="}`))
+		return failed
+	}); !errors.Is(err, failed) {
+		t.Fatalf("first login: %v", err)
+	}
+	registered := testTailState(t, ipn.CurrentProfileStateKey, "profile-test")
+	if err := tailLoginWith(name, strings.NewReader("fresh-key\n"), func(key string) error {
+		keys = append(keys, key)
+		if _, err := os.Stat(tailStatePath(name)); !os.IsNotExist(err) {
+			t.Errorf("partial state was not removed")
+		}
+		writeTailState(t, name, registered)
+		return transient
+	}); !errors.Is(err, transient) {
+		t.Fatalf("retry: %v", err)
+	}
+	if err := tailLoginWith(name, strings.NewReader("unused\n"), func(key string) error {
+		keys = append(keys, key)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(tailStatePath(name))
+	if err != nil || string(got) != string(registered) || strings.Join(keys, ",") != "old-key,fresh-key" {
+		t.Fatalf("state or keys changed: state error=%v, keys=%q", err, keys)
+	}
+}
+
+func TestTailLoginPreservesUnsafeState(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		data []byte
+	}{
+		{"non-current", testTailState(t, ipn.CurrentProfileStateKey, "other")},
+		{"malformed", []byte("{")},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("MOTECONFIG", t.TempDir())
+			writeTailState(t, "test", tt.data)
+			called := false
+			err := tailLoginWith("test", strings.NewReader("key\n"), func(string) error {
+				called = true
+				return nil
+			})
+			got, readErr := os.ReadFile(tailStatePath("test"))
+			if err == nil || called || readErr != nil || string(got) != string(tt.data) {
+				t.Fatalf("err=%v, called=%v, readErr=%v", err, called, readErr)
 			}
 		})
 	}

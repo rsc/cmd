@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,9 +15,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
+
+	"tailscale.com/ipn"
 )
 
 // The Tailscale daemon.
@@ -71,9 +75,72 @@ func tailStatePath(name string) string {
 }
 
 // haveTailCredentials reports whether the named node has been registered.
-func haveTailCredentials(name string) bool {
-	info, err := os.Stat(tailStatePath(name))
-	return err == nil && info.Size() > 0
+func haveTailCredentials(name string) (bool, error) {
+	data, err := os.ReadFile(tailStatePath(name))
+	if os.IsNotExist(err) || err == nil && len(data) == 0 {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("reading Tailscale state: %w", err)
+	}
+	startKey := ipn.CurrentProfileStateKey
+	if runtime.GOOS == "windows" {
+		startKey = ipn.ServerModeStartKey
+	}
+	return tailStateCredentials(data, startKey)
+}
+
+func tailStateCredentials(data []byte, startStateKey ipn.StateKey) (bool, error) {
+	var state map[ipn.StateKey][]byte
+	if err := json.Unmarshal(data, &state); err != nil {
+		return false, fmt.Errorf("invalid Tailscale state: %w", err)
+	}
+	var profiles map[ipn.ProfileID]ipn.LoginProfile
+	if b, ok := state[ipn.KnownProfilesStateKey]; ok {
+		if err := json.Unmarshal(b, &profiles); err != nil {
+			return false, fmt.Errorf("invalid Tailscale profiles: %w", err)
+		}
+	}
+	selected := ipn.StateKey(state[startStateKey])
+	var current ipn.LoginProfile
+	for _, p := range profiles {
+		if p.Key == selected {
+			current = p
+			break
+		}
+	}
+	if current.Key != "" {
+		if have, err := tailPrefsHaveCredentials(state[current.Key]); err != nil || have {
+			return have, err
+		}
+	}
+	for _, p := range profiles {
+		if p.Key == "" || p.Key == current.Key {
+			continue
+		}
+		if have, err := tailPrefsHaveCredentials(state[p.Key]); err != nil {
+			return false, err
+		} else if have {
+			return false, fmt.Errorf("Tailscale state contains a registered non-current profile")
+		}
+	}
+	if selected == "" && len(profiles) == 0 && startStateKey != ipn.ServerModeStartKey {
+		return tailPrefsHaveCredentials(state[ipn.LegacyGlobalDaemonStateKey])
+	}
+	return false, nil
+}
+
+func tailPrefsHaveCredentials(data []byte) (bool, error) {
+	if len(data) == 0 {
+		return false, nil
+	}
+	prefs := ipn.NewPrefs()
+	if err := ipn.PrefsFromBytes(data, prefs); err != nil {
+		return false, fmt.Errorf("invalid Tailscale profile: %w", err)
+	}
+	return !prefs.LoggedOut && prefs.Persist != nil &&
+		!prefs.Persist.PrivateNodeKey.IsZero() && prefs.Persist.NodeID != "" &&
+		prefs.Persist.UserProfile.LoginName != "", nil
 }
 
 // A tailNet is the network a daemon serves: the tailnet in ordinary use
@@ -321,7 +388,11 @@ func runDaemon(name string, tn tailNet) error {
 	}
 
 	if own {
-		if !haveTailCredentials(name) {
+		have, err := haveTailCredentials(name)
+		if err != nil {
+			return err
+		}
+		if !have {
 			return fmt.Errorf("no Tailscale credentials for mote-%s; run mote login tail://%s", name, name)
 		}
 		srv := tsnetServer(name)
