@@ -547,8 +547,9 @@ func (d *daemon) serve(c *Conn, conn net.Conn, req *Request) {
 }
 
 // proxy copies bytes between a and b until either direction ends,
-// then closes both.
-func proxy(a, b net.Conn) {
+// then closes both. The daemon uses it between a mote and the
+// tailnet; "mote relay" uses it between a local connection and a server.
+func proxy(a, b io.ReadWriteCloser) {
 	done := make(chan struct{}, 2)
 	go func() { io.Copy(a, b); done <- struct{}{} }()
 	go func() { io.Copy(b, a); done <- struct{}{} }()

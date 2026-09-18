@@ -56,12 +56,14 @@ func cacheDir() string {
 
 // cmdLogin implements "mote login URL", establishing the credentials
 // that a transport needs before it can be used: Tailscale credentials
-// for tail://name, or the password for tcp://host:port.
+// for tail://name, the address of a tailcat://name server (or, with
+// no name, this machine's own tailcat key), or the password for
+// tcp://host:port.
 func cmdLogin(args []string) {
 	if len(args) != 1 {
 		usage()
 	}
-	const form = "login URL must have the form tail://name or tcp://host:port"
+	const form = "login URL must have the form tail://name, tailcat://name, tailcat:, tailcat:client, or tcp://host:port"
 	u, err := url.Parse(args[0])
 	if err != nil {
 		log.Fatalf("%s", form)
@@ -77,6 +79,10 @@ func cmdLogin(args []string) {
 			log.Fatal(err)
 		}
 		log.Printf("logged in as mote-%s", u.Host)
+	case "tailcat":
+		if err := tailcatLogin(u); err != nil {
+			log.Fatal(err)
+		}
 	case "tcp":
 		if err := checkTCPURL(u); err != nil {
 			log.Fatal(err)
@@ -85,7 +91,7 @@ func cmdLogin(args []string) {
 			log.Fatalf("%s", form)
 		}
 		key := tcpKey(u)
-		password, err := promptPassword(key)
+		password, err := promptSecret("password", key)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -100,19 +106,20 @@ func passwordFile() string {
 	return filepath.Join(configDir(), "password.txt")
 }
 
-// promptPassword prompts for the password to share with the server
-// named by key, without echoing it when standard input is a terminal.
-func promptPassword(key string) (string, error) {
-	fmt.Fprintf(os.Stderr, "password for %s: ", key)
+// promptSecret prompts for the secret of the given kind (“password”,
+// “tailcat address”) to use with the server named by key, without
+// echoing it when standard input is a terminal.
+func promptSecret(kind, key string) (string, error) {
+	fmt.Fprintf(os.Stderr, "%s for %s: ", kind, key)
 	line, err := readLine()
 	if err != nil {
 		return "", err
 	}
-	password := strings.TrimSpace(line)
-	if password == "" {
-		return "", fmt.Errorf("no password provided")
+	secret := strings.TrimSpace(line)
+	if secret == "" {
+		return "", fmt.Errorf("no %s provided", kind)
 	}
-	return password, nil
+	return secret, nil
 }
 
 // readLine reads one line from standard input, suppressing the echo

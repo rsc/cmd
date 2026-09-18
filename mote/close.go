@@ -46,7 +46,7 @@ func cmdClose(args []string) {
 	switch u.Scheme {
 	default:
 		err = fmt.Errorf("unknown server URL scheme %s://", u.Scheme)
-	case "tcp":
+	case "tcp", "tailcat":
 		err = errors.New("nothing to close")
 	case "ssh":
 		err = closeSSH(u)

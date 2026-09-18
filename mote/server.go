@@ -44,6 +44,8 @@ func cmdServe(args []string) {
 		serveTCP(url)
 	case strings.HasPrefix(url, "tail:"):
 		serveTail(url)
+	case strings.HasPrefix(url, "tailcat:"):
+		serveTailcat(url)
 	default:
 		log.Fatalf("cannot serve %s", url)
 	}
@@ -73,6 +75,9 @@ type stdioConn struct{}
 func (stdioConn) Read(p []byte) (int, error)  { return os.Stdin.Read(p) }
 func (stdioConn) Write(p []byte) (int, error) { return os.Stdout.Write(p) }
 func (stdioConn) Close() error                { return nil }
+
+// dialTimeout bounds a Dial request's connection to its target.
+const dialTimeout = 30 * time.Second
 
 // maxSessions is the maximum number of sessions served at once.
 // The limit bounds the resources that clients, which are unauthenticated
@@ -154,6 +159,28 @@ func serve(rw io.ReadWriteCloser, password string, env []string) error {
 	var req Request
 	if _, err := conn.readPacket(&req); err != nil {
 		return fmt.Errorf("reading request: %v", err)
+	}
+	if req.Type == "Dial" {
+		// A relayed connection instead of a command. See "mote relay" in doc.go.
+		if req.Addr == "" {
+			return fail("malformed Dial request")
+		}
+		nc, err := net.DialTimeout("tcp", req.Addr, dialTimeout)
+		if err != nil {
+			return fail("%v", err)
+		}
+		defer nc.Close()
+		if err := conn.writePacket(&Response{Type: "Connected"}, nil); err != nil {
+			return err
+		}
+		// Copy raw bytes until either side hangs up. Closing nc ends the
+		// relayed connection; the caller closing rw is what tells the
+		// client, so the copy from rw is left to fail when that happens.
+		done := make(chan struct{}, 2)
+		go func() { io.Copy(nc, rw); done <- struct{}{} }()
+		go func() { io.Copy(rw, nc); done <- struct{}{} }()
+		<-done
+		return nil
 	}
 	if req.Type != "Setup" {
 		return fail("unexpected request type %q", req.Type)

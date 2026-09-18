@@ -219,6 +219,26 @@ Setup:
 	}
 }
 
+// Dial asks the server at the other end of c to connect to addr, a
+// host:port as seen from the server, and returns the byte stream of
+// that connection, which is c's own underlying stream: after a Dial,
+// the packet framing is over. See protocol.md.
+func (c *Conn) Dial(addr string) (io.ReadWriteCloser, error) {
+	if err := c.writePacket(&Request{Type: "Dial", Addr: addr}, nil); err != nil {
+		return nil, err
+	}
+	resp, _, err := c.readResponse()
+	if err != nil {
+		return nil, err
+	}
+	if resp.Type != "Connected" {
+		return nil, fmt.Errorf("unexpected response type %q", resp.Type)
+	}
+	// A Conn does no buffering, so no bytes are waiting in c;
+	// the stream can be handed on.
+	return c.rw, nil
+}
+
 // readResponse reads one response packet,
 // turning a Response with Error set into an error.
 func (c *Conn) readResponse() (*Response, []byte, error) {

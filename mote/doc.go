@@ -2,16 +2,18 @@
 Mote connects to remote machine and runs commands,
 especially cross-compiled Go tests.
 It can connect using a variety of mechanisms:
-SSH, Gomote, TCP over Tailscale, and authenticated direct TCP.
+SSH, Gomote, TCP over Tailscale, TCP over Tailcat, and authenticated direct TCP.
 
 Usage:
 
 	mote [-u path]... [@name] cmd [args...]
 	mote alias [name [URL]]
+	mote allow tailcat: [key]
 	mote clean
 	mote close [URL]
 	mote go-setup
 	mote login URL
+	mote relay localport:server:remoteport...
 	mote serve URL
 	mote version
 
@@ -214,6 +216,75 @@ and does not reconfigure or otherwise affect the host networking stack.
 Other programs on the machine will not use the Tailscale connection
 managed by mote.
 
+# Using Tailcat
+
+Tailcat (https://github.com/tailscale/tailcat) is Tailscale's data plane
+without its control plane: the same WireGuard tunnels, NAT traversal,
+and relays, but with no tailnet, no account, and no admin console.
+Like tail://, it reaches a server that is not directly accessible;
+unlike tail://, nothing needs to be set up beyond the two machines.
+
+Instead of a name on a tailnet, a tailcat server has a tailcat address,
+a long string holding its public keys and the relay where clients find it.
+The address also holds a pre-shared key, so it is a secret:
+anyone who has it can connect to the server.
+
+To serve mote over Tailcat:
+
+	% mote serve tailcat:
+	mote: serving tailcat address tcomFwWCCcjS5nKNqAod034nWoJZW0LZqDhhC8U_dKdnDRYQ8uNGFpGQEu
+
+The first “mote serve tailcat:” makes the machine's key and picks the nearest
+relay; both are saved, so the address stays the same across restarts.
+Running “mote login tailcat:” makes the key without serving,
+printing the address, for scripts that need it.
+
+On the client, “mote login tailcat://name” saves a server's address under a
+name of the client's choosing, and then tailcat://name names the server:
+
+	% mote login tailcat://kremvax
+	tailcat address for tailcat://kremvax:
+	mote: wrote address for tailcat://kremvax to /home/rsc/.config/mote/password.txt
+	% mote @tailcat://kremvax hostname
+	kremvax.uucp
+	%
+
+The address is typed at the prompt, not on the command line,
+so that it appears in no shell history or alias file.
+Each name saves its own address: logging in to a second server adds
+an entry instead of replacing the first.
+
+The address alone lets anyone who has it run commands on the server.
+A server can be told to answer only particular clients instead.
+On the client, “mote login tailcat:client” makes the machine a key of its own
+and prints the public half:
+
+	% mote login tailcat:client
+	nodekey:cfb6bfa77a0654d7450947fd6acef17d2cd848da1d30b2540b13dac272ddfd16
+
+On the server, “mote allow tailcat: key” adds that key to the list of
+clients the server answers, and “mote allow tailcat:” prints the list:
+
+	% mote allow tailcat: nodekey:cfb6bfa77a0654d7450947fd6acef17d2cd848da1d30b2540b13dac272ddfd16
+	mote: allowed nodekey:cfb6bf…fd16 in /home/rsc/.config/mote/tailcat/allowed.txt (a running mote serve tailcat: must be restarted to see it)
+	% mote allow tailcat:
+	nodekey:cfb6bfa77a0654d7450947fd6acef17d2cd848da1d30b2540b13dac272ddfd16
+
+Once the list has any keys in it, the server ignores every other client,
+which cannot tell the server apart from one that is not running.
+Reaching the server then takes both the address, saved on the client,
+and the client's private key, which never leaves it.
+To take a client off the list, edit allowed.txt and restart the server.
+A client with no key of its own uses a new one for each command,
+which suits a server that answers any client.
+
+Bringing up a tailcat tunnel takes a fraction of a second, so mote does
+not keep one running between commands the way it does for Tailscale:
+each command opens its own. The first packets of a command travel through
+the relay while the two ends find a direct path, which they usually do.
+Tailscale's public relays are free but rate-limited and come with no promises;
+Tailcat's documentation describes running a relay of one's own.
+
 # Using Direct TCP
 
 If the client can connect to the server, the simplest mechanism is direct TCP.
@@ -281,6 +352,27 @@ backed by gomotes as needed. For example:
 	gomote://gotip-linux-arm64
 	%
 
+# Relaying Ports
+
+The “mote relay” command forwards connections to a local port to a port
+on a server, the way “ssh -L” does, through whichever transport reaches
+the server. For example, to reach a VNC server on kremvax's port 5900:
+
+	% mote relay 5901:kremvax:5900
+	mote: relaying 127.0.0.1:5901 to kremvax port 5900
+
+Now a VNC client connecting to localhost:5901 is talking to kremvax's
+port 5900. The server, kremvax here, is an alias or a server URL;
+both ports are TCP ports, and the remote port is on the server's own
+loopback interface. More than one relay can be given, and a local port
+of 0 asks for any free port, which is printed. The command runs until
+interrupted.
+
+Each connection to the local port is its own mote session, so the
+transports share what they already share (an ssh connection, a
+Tailscale daemon, a gomote instance) and each connection pays what a
+mote command pays to reach the server.
+
 # Closing Servers
 
 Each transport leaves the connection open for the next mote command,
@@ -318,15 +410,22 @@ In that directory:
   - gomote-builder holds the name of the gomote instance created for
     gomote://builder, so that later commands reuse the instance and
     “mote close” can destroy it.
-  - password.txt contains the passwords shared with tcp:// servers,
-    as written by “mote login”: one line per server, holding the server
-    URL and then the password, separated by a space.
+  - password.txt contains the passwords shared with tcp:// servers and the
+    addresses of tailcat:// servers, as written by “mote login”: one line
+    per server, holding the server URL and then the secret, separated by a space.
   - tail-name/ is a directory that holds the login credentials for tail://name,
     along with the service socket, lock, and log of the daemon holding that node.
+  - tailcat/ is a directory that holds this machine's Tailcat state:
+    key.json, its server key, made by the first “mote serve tailcat:” or
+    “mote login tailcat:” (removing it makes the next one generate a new key,
+    and so a new address); client.json, its client key, made by
+    “mote login tailcat:client”; allowed.txt, the client keys the server
+    answers, one per line, as written by “mote allow”; and derpmap.json,
+    a cache of the list of Tailcat relays, so that most commands need not fetch it.
 
-Both the Tailscale credentials and the tcp:// passwords are stored in plain text,
-protected only by the file permissions of the configuration directory
-and the files in it.
+The Tailscale credentials, the tailcat keys and addresses, and the tcp://
+passwords are all stored in plain text, protected only by the file permissions
+of the configuration directory and the files in it.
 
 Setting $MOTECONFIG overrides the location of the configuration directory.
 

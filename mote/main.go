@@ -14,10 +14,12 @@ import (
 
 var usageMessage = `Usage: mote [-u path]... [@name] cmd [args...]
 	mote alias [name [URL]]
+	mote allow tailcat: [key]
 	mote clean
 	mote close [URL]
 	mote go-setup
 	mote login URL
+	mote relay localport:server:remoteport...
 	mote serve URL
 	mote version
 `
@@ -58,6 +60,8 @@ func main() {
 	switch args[0] {
 	case "alias":
 		cmdAlias(args[1:])
+	case "allow":
+		cmdAllow(args[1:])
 	case "clean":
 		cmdClean(args[1:])
 	case "close":
@@ -66,6 +70,8 @@ func main() {
 		cmdServe(args[1:])
 	case "login":
 		cmdLogin(args[1:])
+	case "relay":
+		cmdRelay(args[1:])
 	case "go-setup":
 		cmdGoSetup(args[1:])
 	case "version":

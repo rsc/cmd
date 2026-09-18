@@ -35,6 +35,8 @@ func dialServer(rawURL string) (*Conn, error) {
 		rwc, password, err = dialTCP(u)
 	case "tail":
 		rwc, err = dialTail(u)
+	case "tailcat":
+		rwc, err = dialTailcat(u)
 	case "gomote":
 		// Unlike the others, the gomote transport runs the handshake
 		// itself: when the direct connection fails it has a second way

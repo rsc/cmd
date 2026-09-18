@@ -4,7 +4,7 @@ This file describes the protocol that a mote client and a mote server
 speak over an established connection. The connection may be any
 byte stream: the standard input and output of an ssh or gomote
 subprocess, a direct TCP connection, or a TCP connection over
-Tailscale (which uses port 6683, MOTE).
+Tailscale or Tailcat (which use port 6683, MOTE).
 
 The protocol is a sequence of packets. Each packet is framed by a pair
 of 32-bit big-endian lengths: the first counts the bytes of a JSON
@@ -40,11 +40,11 @@ responses. The JSON sections correspond to these Go structs:
 		GOARCH string `json:",omitzero"`
 	}
 
-The request types are Setup, Upload, Start, and Kill.
-The response types are Info, Need, Ready, Output, and Exit.
-The Tailscale daemon, described at the end of this file, adds the
-request types Dial, Serve, and Stop and the response types Connected,
-Serving, Log, and Stopping.
+The request types are Setup, Upload, Start, Kill, and Dial.
+The response types are Info, Need, Ready, Output, Exit, and Connected.
+The Tailscale daemon, described at the end of this file, uses Dial and
+Connected too and adds the request types Serve and Stop and the
+response types Serving, Log, and Stopping.
 
 Any response may set Error, which the client reports as a fatal error.
 A server that cannot continue (a failed upload, a command that cannot
@@ -115,7 +115,7 @@ A direct TCP connection (tcp://host:port) is authenticated and
 encrypted using a password shared by client and server, which each
 keeps in password.txt in its configuration directory, keyed by the URL
 it uses for the server; the other transports are already authenticated
-and encrypted by ssh, gomote, or Tailscale, and skip this step.
+and encrypted by ssh, gomote, Tailscale, or Tailcat, and skip this step.
 
 First, a CPace handshake (X25519, SHA-512, channel identifier
 “rsc.io/cmd/mote tcp”, no additional data) proves that both sides hold
@@ -214,6 +214,18 @@ human-readable description of how the command exited) set, and then
 hangs up. ExitCode is negative if the command was killed by a signal.
 After receiving Exit, the client hangs up.
 
+## Relaying a Connection
+
+Instead of Setup, the client may answer Info with a request of type
+Dial, with Addr set to a host:port for the server to connect to (“mote
+relay” sends localhost and the remote port). The server connects and
+answers with a response of type Connected, or with a final Exit
+response with Error set if it cannot. After Connected the packet
+framing stops: both sides copy raw bytes between the connection and
+the relayed one until either hangs up, and then hang up on the other.
+A session relays one connection; “mote relay” opens a session for
+each connection it accepts.
+
 ## The Tailscale Daemon
 
 Bringing a Tailscale node up takes a few seconds, so mote does not do
@@ -226,12 +238,13 @@ different connection: between a mote and its local daemon, not between
 a client and a remote server.
 
 A client that wants to reach a server sends a request of type Dial
-with Addr set to the tailnet address (`mote-name:6683`). The daemon
-answers with a response of type Connected, or of type Error with Error
-set if it cannot reach the address. After Connected the packet framing
-stops on that connection: the daemon copies raw bytes in both
-directions between the client and the tailnet, and the client speaks
-the protocol above through it to the remote server.
+with Addr set to the tailnet address (`mote-name:6683`), as it would
+ask a server to relay a connection. The daemon answers with a response
+of type Connected, or of type Error with Error set if it cannot reach
+the address. After Connected the packet framing stops on that
+connection: the daemon copies raw bytes in both directions between the
+client and the tailnet, and the client speaks the protocol above
+through it to the remote server.
 
 A request of type Stop (sent by “mote close”) asks the daemon to shut
 down. The daemon answers with a response of type Stopping, stops
