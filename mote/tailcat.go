@@ -273,7 +273,6 @@ func startTailcat(k *tailcat.PrivateKey) (*tailcat.Server, net.Listener, error) 
 		DisablePresharedKey: k.Public.PresharedKey.IsZero(),
 		RegionID:            k.Public.RegionID,
 		DERPMapCache:        derpMapCache{},
-		AllowedClients:      allowed,
 		ServedTCPPorts:      []filter.PortRange{{First: tailPort, Last: tailPort}},
 		Logf:                tailcatLogf(),
 		OnTCP: func(port uint16) func(net.Conn) {
@@ -282,6 +281,16 @@ func startTailcat(k *tailcat.PrivateKey) (*tailcat.Server, net.Listener, error) 
 			}
 			return ln.handle
 		},
+	}
+	if len(allowed) > 0 {
+		// A nil AllowClient answers everyone; an empty allowed.txt
+		// means the same, so only install the set when it has keys.
+		var allow tailcat.KeySet
+		for _, k := range allowed {
+			allow.Add(k)
+		}
+		srv.AllowClient = allow.Contains
+		log.Printf("answering %d allowed client keys", len(allowed))
 	}
 	if len(k.Public.Region) > 0 {
 		// A key made for a particular relay (or for a test) names the
@@ -310,9 +319,6 @@ func serveTailcat(rawURL string) {
 		log.Fatalf("tailcat: %v\n(if the DERP region is gone, remove %s to make a new key and address)", err, tailcatKeyFile())
 	}
 	defer srv.Close()
-	if n := len(srv.AllowedClients); n > 0 {
-		log.Printf("answering %d allowed client keys", n)
-	}
 	log.Printf("serving tailcat address %s", tailcatAddr(k))
 	log.Fatal(serveListener(ln, "", nil))
 }
