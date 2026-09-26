@@ -44,14 +44,18 @@ func tailNames() []string {
 // up creates the directory before the registration that fills it in, so
 // an abandoned or failed registration leaves one behind. Such a
 // directory is not a login and must not be mistaken for one.
-func loggedInTailNames() []string {
+func loggedInTailNames() ([]string, error) {
 	var names []string
 	for _, name := range tailNames() {
-		if haveTailCredentials(name) {
+		have, err := haveTailCredentials(name)
+		if err != nil {
+			return nil, fmt.Errorf("mote-%s: %w", name, err)
+		}
+		if have {
 			names = append(names, name)
 		}
 	}
-	return names
+	return names, nil
 }
 
 // hostTailName returns the default name for this machine:
@@ -74,7 +78,10 @@ func hostTailName() string {
 // or “mote serve tail://name” should not add a second node to the
 // tailnet just to run a command.
 func clientTailName() (string, error) {
-	names := loggedInTailNames()
+	names, err := loggedInTailNames()
+	if err != nil {
+		return "", err
+	}
 	host := hostTailName()
 	if len(names) == 0 || slices.Contains(names, host) {
 		return host, nil
@@ -88,7 +95,10 @@ func clientTailName() (string, error) {
 // registeredTailName returns the single registered name,
 // for use expanding the shorthand "tail:".
 func registeredTailName() (string, error) {
-	names := loggedInTailNames()
+	names, err := loggedInTailNames()
+	if err != nil {
+		return "", err
+	}
 	switch len(names) {
 	case 0:
 		return "", fmt.Errorf("not logged in to Tailscale; run mote login tail://name or mote serve tail://name")
@@ -122,24 +132,30 @@ func tsnetServer(name string) *tsnet.Server {
 // The daemon runs in the background with no terminal to prompt on,
 // so registration always happens in the foreground, here.
 func tailLogin(name string) error {
-	if haveTailCredentials(name) {
+	return tailLoginWith(name, os.Stdin, func(authKey string) error {
+		srv := tsnetServer(name)
+		srv.AuthKey = authKey
+		defer srv.Close()
+		if _, err := srv.Up(context.Background()); err != nil {
+			return fmt.Errorf("tailscale: %v", err)
+		}
 		return nil
+	})
+}
+
+func tailLoginWith(name string, in io.Reader, register func(string) error) error {
+	if have, err := haveTailCredentials(name); err != nil || have {
+		return err
 	}
-	// Prompt before creating the node directory, which tsnet does itself:
-	// an abandoned prompt should leave nothing behind that later looks
-	// like a login. See loggedInTailNames.
 	fmt.Fprintf(os.Stderr, "Tailscale auth key: ")
-	sc := bufio.NewScanner(os.Stdin)
+	sc := bufio.NewScanner(in)
 	if !sc.Scan() || strings.TrimSpace(sc.Text()) == "" {
 		return fmt.Errorf("no Tailscale auth key provided")
 	}
-	srv := tsnetServer(name)
-	srv.AuthKey = strings.TrimSpace(sc.Text())
-	defer srv.Close()
-	if _, err := srv.Up(context.Background()); err != nil {
-		return fmt.Errorf("tailscale: %v", err)
+	if err := os.Remove(tailStatePath(name)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("removing incomplete Tailscale state: %w", err)
 	}
-	return nil
+	return register(strings.TrimSpace(sc.Text()))
 }
 
 // onceLogf returns a logger that suppresses repeated messages.
