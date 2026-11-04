@@ -585,22 +585,50 @@ tr.diffrow.cursor td.num:first-child { box-shadow: inset 3px 0 0 var(--focused-l
 
 ::selection { background: var(--diff-selection-background-color); }
 
-/* Context control, styled as Gerrit's yellow band. */
-tr.skiprow td.skipcell {
-	background: var(--diff-context-control-background-color);
-	border-top: 1px solid var(--diff-context-control-border-color);
-	border-bottom: 1px solid var(--diff-context-control-border-color);
-	text-align: center;
-	padding: 2px;
+/* Context control, styled as Gerrit's divider and minitab buttons. */
+tr.skiprow td.skipcell { position: relative; text-align: center; user-select: none; }
+.skipbg {
+	position: absolute;
+	inset: 0;
+	display: grid;
+	grid-template-columns: 6ch 1fr 6ch 1fr;
 }
-button.expand {
-	background: none;
-	border: 0;
-	color: var(--gray-700);
-	font-family: var(--font);
-	font-size: 12px;
+table.diff.unified .skipbg,
+body.hideleft table.diff .skipbg { grid-template-columns: 6ch 1fr; }
+body.hideleft table.diff:not(.unified) .skipbg > :nth-child(-n+2) { display: none; }
+.skipbg .skipnum { background: var(--gray-50); border-right: var(--border); }
+.skipbg .skipcode { background: #fff; }
+tr.skiprow:not(:first-child):not(:last-child) td.skipcell::after {
+	content: "";
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 50%;
+	height: 6px;
+	margin-top: -3px;
+	background: var(--gray-100);
+	border-top: var(--border);
+	border-bottom: var(--border);
 }
-button.expand:hover { text-decoration: underline; background: none; }
+.skipcontrols {
+	position: relative;
+	z-index: 1;
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	padding: 3px 0;
+	vertical-align: top;
+}
+.skipcontrols:not(:has(.expandstep)) { padding: 6px 0; }
+tr.skiprow:first-child:not(:last-child) .skipcontrols { align-items: flex-start; padding: 0 0 4px; }
+tr.skiprow:last-child:not(:first-child) .skipcontrols { align-items: flex-end; padding: 4px 0 0; }
+.expandstep { display: flex; flex-direction: column; gap: 6px; }
+button.expand { font-size: 12px; height: 24px; padding: 0 12px; }
+.expandstep button.expand { height: 20px; padding: 0 10px; }
+button.expand.top,
+tr.skiprow:last-child:not(:first-child) button.expand { border-bottom: 0; border-radius: 4px 4px 0 0; }
+button.expand.bottom,
+tr.skiprow:first-child:not(:last-child) button.expand { border-top: 0; border-radius: 0 0 4px 4px; }
 
 /* With the left pane hidden its columns are squeezed to nothing (keys.js
  * zeroes their widths) and their contents hidden, so the right code

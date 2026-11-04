@@ -1125,16 +1125,20 @@ func (s *server) filesURL(r *Review, key, base, target string) string {
 	return u
 }
 
+const expandStep = 10
+
 // renderRow is one row of the rendered diff, with its comment threads.
 type renderRow struct {
 	Row
-	LeftHTML     template.HTML
-	RightHTML    template.HTML
-	LeftThreads  []*Thread
-	RightThreads []*Thread
-	LeftFormURL  string
-	RightFormURL string
-	ExpandURL    string
+	LeftHTML        template.HTML
+	RightHTML       template.HTML
+	LeftThreads     []*Thread
+	RightThreads    []*Thread
+	LeftFormURL     string
+	RightFormURL    string
+	ExpandURL       string
+	ExpandTopURL    string
+	ExpandBottomURL string
 }
 
 // RowClass is what the row's <tr> carries: its kind, plus a mark on a row
@@ -1314,7 +1318,7 @@ func (s *server) diff(w http.ResponseWriter, req *http.Request, r *Review) error
 	// The top bar stays put while the diff scrolls, so naming the file
 	// there answers "what am I looking at" without scrolling back up.
 	p.FileName = p.File.Name()
-	p.Rows = s.renderRows(r, rows, p, leftAt, rightAt)
+	p.Rows = s.renderRows(r, rows, p, leftAt, rightAt, len(oldLines))
 
 	// Neighbouring files, for the ] and [ shortcuts and the J/K jumps.
 	type fileEntry struct {
@@ -1386,7 +1390,7 @@ func hasThread(leftAt, rightAt map[int][]*Thread) func(Row) bool {
 
 // renderRows turns diff rows into rendered rows, attaching comment threads
 // and the URLs that open a comment form on each line.
-func (s *server) renderRows(r *Review, rows []Row, p *diffPage, leftAt, rightAt map[int][]*Thread) []*renderRow {
+func (s *server) renderRows(r *Review, rows []Row, p *diffPage, leftAt, rightAt map[int][]*Thread, oldLen int) []*renderRow {
 	var out []*renderRow
 	for _, row := range rows {
 		rr := &renderRow{Row: row}
@@ -1401,7 +1405,17 @@ func (s *server) renderRows(r *Review, rows []Row, p *diffPage, leftAt, rightAt 
 			rr.RightFormURL = s.formURL(p, "new", row.R.Num)
 		}
 		if row.Kind == RowSkip {
-			rr.ExpandURL = s.expandURL(p, row)
+			rr.ExpandURL = s.expandURL(p, row, "")
+			if row.Count > expandStep {
+				// Collapse keeps at least one context line beside every chunk, so a
+				// skip reaches line 1 or oldLen only at the very ends of the file.
+				if row.LFrom > 1 {
+					rr.ExpandTopURL = s.expandURL(p, row, "top")
+				}
+				if row.LFrom+row.Count-1 < oldLen {
+					rr.ExpandBottomURL = s.expandURL(p, row, "bottom")
+				}
+			}
 		}
 		out = append(out, rr)
 	}
@@ -1427,13 +1441,16 @@ func (s *server) formURL(p *diffPage, side string, line int) string {
 	return "/" + url.PathEscape(p.RepoName) + "/f/form?" + q.Encode()
 }
 
-func (s *server) expandURL(p *diffPage, row Row) string {
+func (s *server) expandURL(p *diffPage, row Row, end string) string {
 	q := url.Values{
 		"key":   {p.Key},
 		"f":     {p.FileParam},
 		"from":  {strconv.Itoa(row.LFrom)},
 		"to":    {strconv.Itoa(row.LFrom + row.Count - 1)},
 		"rfrom": {strconv.Itoa(row.RFrom)},
+	}
+	if end != "" {
+		q.Set("end", end)
 	}
 	if p.BaseParam != "" {
 		q.Set("base", p.BaseParam)
@@ -1500,18 +1517,42 @@ func (s *server) expand(w http.ResponseWriter, req *http.Request, r *Review) err
 	leftAt, rightAt := ThreadsByLine(left), ThreadsByLine(right)
 
 	var rows []Row
-	for i := 0; from+i <= to; i++ {
-		l, r := from+i, rfrom+i
-		if l < 1 || l > len(oldLines) || r < 1 || r > len(newLines) {
-			break
+	addEqual := func(l0, r0, n int) {
+		for i := 0; i < n; i++ {
+			l, r := l0+i, r0+i
+			if l < 1 || l > len(oldLines) || r < 1 || r > len(newLines) {
+				break
+			}
+			rows = append(rows, Row{
+				Kind: RowEqual,
+				L:    Line{Num: l, Text: oldLines[l-1]},
+				R:    Line{Num: r, Text: newLines[r-1]},
+			})
 		}
-		rows = append(rows, Row{
-			Kind: RowEqual,
-			L:    Line{Num: l, Text: oldLines[l-1]},
-			R:    Line{Num: r, Text: newLines[r-1]},
-		})
 	}
-	p.Rows = s.renderRows(r, rows, p, leftAt, rightAt)
+	n := to - from + 1
+	switch end := req.FormValue("end"); {
+	case end == "top" && n > expandStep:
+		addEqual(from, rfrom, expandStep)
+		rows = append(rows, Row{
+			Kind:  RowSkip,
+			Count: n - expandStep,
+			LFrom: from + expandStep,
+			RFrom: rfrom + expandStep,
+		})
+	case end == "bottom" && n > expandStep:
+		rem := n - expandStep
+		rows = append(rows, Row{
+			Kind:  RowSkip,
+			Count: rem,
+			LFrom: from,
+			RFrom: rfrom,
+		})
+		addEqual(from+rem, rfrom+rem, expandStep)
+	default:
+		addEqual(from, rfrom, n)
+	}
+	p.Rows = s.renderRows(r, rows, p, leftAt, rightAt, len(oldLines))
 	return tmpl.ExecuteTemplate(w, "rows", p)
 }
 
@@ -1546,7 +1587,7 @@ func (s *server) inline(w http.ResponseWriter, req *http.Request, r *Review) err
 		rows = Unified(rows)
 	}
 	p.SelfURL = s.diffURL(r, c.Key, p.FileParam, p.BaseParam, p.TargetParam)
-	p.Rows = s.renderRows(r, rows, p, leftAt, rightAt)
+	p.Rows = s.renderRows(r, rows, p, leftAt, rightAt, len(oldLines))
 
 	// The same frame the diff page puts around these rows. The columns are
 	// not decoration: table-layout is fixed, so without a colgroup the

@@ -546,34 +546,88 @@ func TestServerSnapshotAndBase(t *testing.T) {
 func TestServerExpandContext(t *testing.T) {
 	s, r, dir := newTestServer(t)
 	var big strings.Builder
-	for i := range 60 {
-		big.WriteString("line ")
-		big.WriteString(strconv.Itoa(i))
-		big.WriteString("\n")
+	for i := range 100 {
+		fmt.Fprintf(&big, "line %d\n", i)
 	}
 	write(t, dir, "big.txt", big.String())
 	do(t, dir, "git", "add", ".")
-	do(t, dir, "git", "commit", "-q", "-m", "add big\n\nChange-Id: Ibig\n")
+	var msg strings.Builder
+	msg.WriteString("add big\n\n")
+	for i := range 20 {
+		fmt.Fprintf(&msg, "msg %d\n", i)
+	}
+	msg.WriteString("\nChange-Id: Ibig\n")
+	do(t, dir, "git", "commit", "-q", "-m", msg.String())
 	mustGet(t, s, repoURL(t, r, "/c/Ibig"))
 
 	edited := strings.Replace(big.String(), "line 30\n", "line thirty\n", 1)
+	edited = strings.Replace(edited, "line 70\n", "line seventy\n", 1)
 	write(t, dir, "big.txt", edited)
 	do(t, dir, "git", "add", ".")
 	do(t, dir, "git", "commit", "-q", "--amend", "--no-edit")
 	post(t, s, repoURL(t, r, "/snapshot"), url.Values{"key": {"Ibig"}})
 
 	body := mustGet(t, s, repoURL(t, r, "/d/Ibig?f=big.txt&base=1&s=2"))
-	if !strings.Contains(body, "unchanged line") {
-		t.Fatalf("long unchanged runs were not collapsed:\n%s", body)
+	skips := regexp.MustCompile(`(?s)<tr class="skiprow">.*?</tr>`).FindAllString(body, -1)
+	if len(skips) != 3 {
+		t.Fatalf("got %d skip rows, want 3:\n%s", len(skips), body)
 	}
-	// The expander must return the hidden rows.
-	m := regexp.MustCompile(`hx-get="([^"]*f/expand[^"]*)"`).FindStringSubmatch(body)
+
+	// Leading, middle, and trailing skips offer only the ends that
+	// touch an adjacent chunk, with top stacked over bottom in the middle.
+	if !strings.Contains(skips[0], "end=bottom") || strings.Contains(skips[0], "end=top") {
+		t.Errorf("leading skip:\n%s", skips[0])
+	}
+	it, ib := strings.Index(skips[1], "end=top"), strings.Index(skips[1], "end=bottom")
+	if it < 0 || ib < 0 || it > ib {
+		t.Errorf("middle skip:\n%s", skips[1])
+	}
+	if !strings.Contains(skips[2], "end=top") || strings.Contains(skips[2], "end=bottom") {
+		t.Errorf("trailing skip:\n%s", skips[2])
+	}
+
+	// Expanding 10 lines from the bottom of the leading skip (lines 0..19) leaves
+	// lines 0..9 collapsed above lines 10..19, with no +10 left on the 10-line remainder.
+	m := regexp.MustCompile(`hx-get="([^"]*end=bottom[^"]*)"`).FindStringSubmatch(skips[0])
+	if m == nil {
+		t.Fatal("no end=bottom link in leading skip")
+	}
+	bottom := mustGet(t, s, htmlUnescape(m[1]))
+	if strings.Contains(bottom, "+10") || strings.Contains(bottom, ">line 9<") || !strings.Contains(bottom, ">line 19<") {
+		t.Errorf("end=bottom expansion:\n%s", bottom)
+	}
+	if i, j := strings.Index(bottom, "Expand 10 unchanged lines"), strings.Index(bottom, ">line 10<"); i < 0 || j < 0 || i > j {
+		t.Errorf("end=bottom did not place remaining skip before expanded lines:\n%s", bottom)
+	}
+
+	// Expanding 10 lines from the top of the trailing skip (lines 81..99) shows
+	// lines 81..90 before the 9 remaining hidden lines.
+	m = regexp.MustCompile(`hx-get="([^"]*end=top[^"]*)"`).FindStringSubmatch(skips[2])
+	if m == nil {
+		t.Fatal("no end=top link in trailing skip")
+	}
+	top := mustGet(t, s, htmlUnescape(m[1]))
+	if strings.Contains(top, "+10") || !strings.Contains(top, ">line 81<") || strings.Contains(top, ">line 91<") {
+		t.Errorf("end=top expansion:\n%s", top)
+	}
+	if i, j := strings.Index(top, ">line 90<"), strings.Index(top, "Expand 9 unchanged lines"); i < 0 || j < 0 || i > j {
+		t.Errorf("end=top did not place expanded lines before remaining skip:\n%s", top)
+	}
+
+	// The full expander still returns every hidden row.
+	m = regexp.MustCompile(`hx-get="([^"]*f/expand[^"]*)"`).FindStringSubmatch(skips[0])
 	if m == nil {
 		t.Fatal("no expand link in collapsed diff")
 	}
 	rows := mustGet(t, s, htmlUnescape(m[1]))
-	if !strings.Contains(rows, "line 0") {
-		t.Errorf("expanded rows do not include the hidden lines:\n%s", rows)
+	if !strings.Contains(rows, ">line 0<") || strings.Contains(rows, "skiprow") {
+		t.Errorf("expanded rows do not include all hidden lines:\n%s", rows)
+	}
+
+	// An unchanged file collapses to a single centered skip with no +10 tabs.
+	same := mustGet(t, s, repoURL(t, r, "/d/Ibig?f="+url.QueryEscape(CommitMsgFile)+"&base=1&s=2"))
+	if !strings.Contains(same, "skiprow") || !strings.Contains(same, "unchanged lines") || strings.Contains(same, "+10") || strings.Contains(same, "diffrow") {
+		t.Errorf("unchanged file skip:\n%s", same)
 	}
 }
 
