@@ -96,9 +96,25 @@
   {{if eq .Class "skip"}}
   <tr class="skiprow">
     <td class="skipcell" colspan="{{$p.Cols}}">
-      <button class="expand" hx-get="{{.ExpandURL}}" hx-target="closest tr" hx-swap="outerHTML">
-        Expand {{.Count}} unchanged line{{if ne .Count 1}}s{{end}}
-      </button>
+      <div class="skipbg">
+        {{if not $p.Unified}}<span class="skipnum"></span><span class="skipcode"></span>{{end}}
+        <span class="skipnum"></span><span class="skipcode"></span>
+      </div>
+      <div class="skipcontrols">
+        <button class="expand" hx-get="{{.ExpandURL}}" hx-target="closest tr" hx-swap="outerHTML">
+          Expand {{.Count}} unchanged line{{if ne .Count 1}}s{{end}}
+        </button>
+        {{if or .ExpandTopURL .ExpandBottomURL}}
+        <div class="expandstep">
+          {{if .ExpandTopURL}}
+          <button class="expand top" hx-get="{{.ExpandTopURL}}" hx-target="closest tr" hx-swap="outerHTML">+10</button>
+          {{end}}
+          {{if .ExpandBottomURL}}
+          <button class="expand bottom" hx-get="{{.ExpandBottomURL}}" hx-target="closest tr" hx-swap="outerHTML">+10</button>
+          {{end}}
+        </div>
+        {{end}}
+      </div>
     </td>
   </tr>
   {{else}}
