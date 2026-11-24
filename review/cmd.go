@@ -6,9 +6,11 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"math"
 	"os"
@@ -633,6 +635,59 @@ func cmdSnapshots(args []string) {
 		for _, s := range snaps {
 			fmt.Fprintf(stdout, "  %d  %s  %s  %s\n", s.N, s.ShortRev(), s.Created.Format("2006-01-02 15:04"), s.Subject)
 		}
+	}
+}
+
+// cmdPrune deletes what the database holds about every repository whose
+// directory no longer exists.
+func cmdPrune(args []string) {
+	f := newFlags("prune", "[-n]")
+	dryRun := f.Bool("n", false, "print what would be pruned without pruning it")
+	f.Parse(args)
+	if f.NArg() != 0 {
+		f.Usage()
+	}
+
+	db, err := OpenDB(dbPath())
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+
+	known, err := db.KnownRepos()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Only a directory that is not there at all counts as gone. A
+	// repository git or jj fails to open may be one that is merely
+	// misconfigured, and its comments are not to be thrown away for that.
+	var gone []string
+	for _, p := range known {
+		if _, err := os.Stat(p); errors.Is(err, fs.ErrNotExist) {
+			gone = append(gone, p)
+		}
+	}
+	if len(gone) == 0 {
+		fmt.Fprintln(stdout, "nothing to prune")
+		return
+	}
+
+	verb := "pruned"
+	if *dryRun {
+		verb = "would prune"
+	}
+	for _, p := range gone {
+		changes, threads, err := db.RepoCounts(p)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if !*dryRun {
+			if err := db.DeleteRepo(p); err != nil {
+				log.Fatal(err)
+			}
+		}
+		fmt.Fprintf(stdout, "%s %s: %d change%s, %d thread%s\n", verb, p, changes, plural(changes), threads, plural(threads))
 	}
 }
 

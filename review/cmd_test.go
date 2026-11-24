@@ -6,6 +6,8 @@ package main
 
 import (
 	"encoding/json"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -440,4 +442,132 @@ func TestAddFileOutsideTheChange(t *testing.T) {
 	// The guards that remain — an unknown file, a line past the end of one
 	// that exists — end the process, so they are exercised by hand rather
 	// than here.
+}
+
+// seedRepo records one change in repo with a snapshot carrying everything
+// prune has to clear away: a thread with a published comment and a draft,
+// a file marked reviewed, and a mark on the snapshot itself.
+func seedRepo(t *testing.T, d *DB, repo, key string) {
+	t.Helper()
+	s, _, err := d.AddSnapshot(repo, testChange(key, "rev"+key, "subject "+key))
+	if err != nil {
+		t.Fatal(err)
+	}
+	th, err := d.AddThread(s.ID, "a.go", "new", 1, "x", &Comment{Author: "rsc", Body: "published"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.AddComment(th.ID, &Comment{Author: "rsc", Body: "draft", Draft: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetReviewed(s.ID, "a.go", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetSnapshotLGTM(s.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.RepoName(repo); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// pruneDB sets up a database holding one repository that is still there
+// and one whose directory has gone, and points the CLI at it.
+func pruneDB(t *testing.T) (d *DB, live, gone string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "review.db")
+	d, err := OpenDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { d.Close() })
+	testDB = path
+	t.Cleanup(func() { testDB = ""; dbFile = "" })
+
+	live = t.TempDir()
+	gone = filepath.Join(t.TempDir(), "gone")
+	seedRepo(t, d, live, "Ilive")
+	seedRepo(t, d, gone, "Igone1")
+	seedRepo(t, d, gone, "Igone2")
+	return d, live, gone
+}
+
+// TestPrune checks that prune takes exactly the repositories whose
+// directories have gone, and all of what was recorded about them, and
+// that -n only says what it would do.
+func TestPrune(t *testing.T) {
+	d, live, gone := pruneDB(t)
+	goneName, err := d.RepoName(gone)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureOut(t)
+	cmdPrune(cli("-n"))
+	if want := "would prune " + gone + ": 2 changes, 2 threads\n"; out.String() != want {
+		t.Errorf("prune -n printed %q, want %q", out.String(), want)
+	}
+	if repos, _ := d.Repos(); len(repos) != 2 {
+		t.Fatalf("prune -n pruned something: repos = %v", repos)
+	}
+
+	out.Reset()
+	cmdPrune(cli())
+	if want := "pruned " + gone + ": 2 changes, 2 threads\n"; out.String() != want {
+		t.Errorf("prune printed %q, want %q", out.String(), want)
+	}
+	repos, err := d.Repos()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(repos, []string{live}) {
+		t.Errorf("after prune, repos = %v, want [%s]", repos, live)
+	}
+	if _, err := d.RepoPath(goneName); err == nil {
+		t.Errorf("name %q still refers to the pruned repository", goneName)
+	}
+	// Nothing of the gone repository may be left behind in any table.
+	for _, table := range []string{"change", "snapshot", "thread", "comment", "reviewed", "snapshot_mark"} {
+		var n int
+		if err := d.sql.QueryRow("SELECT count(*) FROM " + table).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		want := 1
+		if table == "comment" {
+			want = 2 // the live repository's published comment and draft
+		}
+		if n != want {
+			t.Errorf("%s has %d rows after prune, want %d", table, n, want)
+		}
+	}
+	if changes, threads, err := d.RepoCounts(live); err != nil || changes != 1 || threads != 1 {
+		t.Errorf("live repository now has %d changes, %d threads, %v; want 1, 1", changes, threads, err)
+	}
+
+	out.Reset()
+	cmdPrune(cli())
+	if want := "nothing to prune\n"; out.String() != want {
+		t.Errorf("second prune printed %q, want %q", out.String(), want)
+	}
+}
+
+// TestPruneGoneName checks that a repository that has gone is pruned even
+// if all that was ever recorded about it was its name, as for one the
+// server was started in but nothing was reviewed in, so that a path that
+// no longer exists does not keep its name for good.
+func TestPruneGoneName(t *testing.T) {
+	d, _, _ := pruneDB(t)
+	named := filepath.Join(t.TempDir(), "named")
+	if _, err := d.RepoName(named); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureOut(t)
+	cmdPrune(cli())
+	if !strings.Contains(out.String(), "pruned "+named+": 0 changes, 0 threads\n") {
+		t.Errorf("prune did not prune the gone repository that only had a name:\n%s", out.String())
+	}
+	if _, err := d.RepoPath("named"); err == nil {
+		t.Errorf("name %q still refers to the pruned repository", "named")
+	}
 }

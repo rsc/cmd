@@ -913,6 +913,86 @@ func (d *DB) Repos() ([]string, error) {
 	return out, rows.Err()
 }
 
+// Named reports whether a repository has been given a short name and
+// still has it.
+func (d *DB) Named(path string) (bool, error) {
+	var n int
+	err := d.sql.QueryRow("SELECT count(*) FROM repo WHERE path = ?", path).Scan(&n)
+	return n > 0, err
+}
+
+// KnownRepos returns every repository the database holds anything about,
+// by path.
+func (d *DB) KnownRepos() ([]string, error) {
+	// The repo table counts too: the repository the server was started in
+	// has a name even if nothing was ever reviewed in it.
+	rows, err := d.sql.Query("SELECT repo FROM change UNION SELECT path FROM repo ORDER BY 1")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// RepoCounts reports how many changes a repository has recorded and how
+// many comment threads, drafts included, are on them.
+func (d *DB) RepoCounts(path string) (changes, threads int, err error) {
+	err = d.sql.QueryRow(`SELECT
+			(SELECT count(*) FROM change WHERE repo = ?),
+			(SELECT count(*) FROM thread t
+				JOIN snapshot s ON s.id = t.snapshot_id
+				JOIN change c ON c.id = s.change_id
+				WHERE c.repo = ?)`, path, path).Scan(&changes, &threads)
+	return changes, threads, err
+}
+
+// DeleteRepo deletes everything recorded about a repository: its changes,
+// their snapshots, the threads and comments on them, drafts included, the
+// marks saying what was reviewed, and the short name it was given. It is
+// for a repository that has gone, such as a removed git worktree, which
+// would otherwise be listed on the main page for good, since the list is
+// every repository with a change recorded.
+//
+// The name goes too, rather than being kept so that links keep working:
+// there is nothing left for a link to show, and a repository later made at
+// the same path is new, and gets a name the way any new repository does.
+func (d *DB) DeleteRepo(path string) error {
+	tx, err := d.sql.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Children before parents, since foreign keys are enforced.
+	const (
+		changes   = `SELECT id FROM change WHERE repo = ?`
+		snapshots = `SELECT id FROM snapshot WHERE change_id IN (` + changes + `)`
+		threads   = `SELECT id FROM thread WHERE snapshot_id IN (` + snapshots + `)`
+	)
+	for _, q := range []string{
+		`DELETE FROM comment WHERE thread_id IN (` + threads + `)`,
+		`DELETE FROM thread WHERE snapshot_id IN (` + snapshots + `)`,
+		`DELETE FROM reviewed WHERE snapshot_id IN (` + snapshots + `)`,
+		`DELETE FROM snapshot_mark WHERE snapshot_id IN (` + snapshots + `)`,
+		`DELETE FROM snapshot WHERE change_id IN (` + changes + `)`,
+		`DELETE FROM change WHERE repo = ?`,
+		`DELETE FROM repo WHERE path = ?`,
+	} {
+		if _, err := tx.Exec(q, path); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // Pref returns a stored preference, or def if it is not set.
 func (d *DB) Pref(key, def string) string {
 	var v string

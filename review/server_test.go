@@ -2555,3 +2555,28 @@ func TestCommentsTabsEmptyStates(t *testing.T) {
 		t.Error("resolved tab shows its placeholder despite having a thread")
 	}
 }
+
+// TestRepoPathsPrunedHome checks that the repository the server was
+// started in is listed after its directory has gone, unavailable like any
+// other, and stops being listed once it is pruned, even though nothing
+// about it was ever recorded but its name.
+func TestRepoPathsPrunedHome(t *testing.T) {
+	d := newDB(t)
+	home := t.TempDir()
+	s := newServer(d, home, true)
+	if paths, err := s.repoPaths(); err != nil || !slices.Equal(paths, []string{home}) {
+		t.Fatalf("repoPaths = %v, %v; want [%s]", paths, err, home)
+	}
+	if err := os.Remove(home); err != nil {
+		t.Fatal(err)
+	}
+	if paths, err := s.repoPaths(); err != nil || !slices.Equal(paths, []string{home}) {
+		t.Errorf("repoPaths after removing home = %v, %v; want it still listed", paths, err)
+	}
+	if err := d.DeleteRepo(home); err != nil {
+		t.Fatal(err)
+	}
+	if paths, err := s.repoPaths(); err != nil || len(paths) != 0 {
+		t.Errorf("repoPaths after pruning home = %v, %v; want none", paths, err)
+	}
+}

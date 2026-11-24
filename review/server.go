@@ -350,7 +350,15 @@ func (s *server) repoPaths() ([]string, error) {
 		return nil, err
 	}
 	if s.home != "" && !slices.Contains(paths, s.home) {
-		paths = append(paths, s.home)
+		// Only while it has its name: newServer gives it one, and review
+		// prune takes it away once its directory is gone.
+		named, err := s.db.Named(s.home)
+		if err != nil {
+			return nil, err
+		}
+		if named {
+			paths = append(paths, s.home)
+		}
 	}
 	slices.Sort(paths)
 	return paths, nil
