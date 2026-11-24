@@ -12,6 +12,7 @@ Usage:
 	review [-a addr] [-n]
 	review add [-from name] [-s n] change file[:line] [text]
 	review comments [-json] [-all] [-drafts] [-s n] [-c n] [change]
+	review prune [-n]
 	review publish [change]
 	review reply [-from name] [-resolve] thread [text]
 	review resolve thread...
@@ -488,7 +489,14 @@ Comments live in a SQLite database at $HOME/.config/review/review.db, or
 under $XDG_CONFIG_HOME if that is set. One database holds the reviews of
 every repository on the machine, keyed by repository root, which is what
 lets the main page show them all at once however it was started. The
-command line always works on the repository containing the current
-directory.
+command line works on the repository containing the current directory,
+with one exception:
+
+	review prune [-n]
+
+deletes everything recorded about repositories whose directory no longer
+exists, such as removed git worktrees, which the main page otherwise
+lists as unavailable. The -n flag prints what would be pruned without
+pruning it.
 */
 package main

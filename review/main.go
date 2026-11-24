@@ -18,6 +18,7 @@ var usageMessage = `usage:
 	review [-a addr] [-n]
 	review add [-from name] [-s n] change file[:line] [text]
 	review comments [-json] [-all] [-drafts] [-s n] [-c n] [change]
+	review prune [-n]
 	review publish [change]
 	review reply [-from name] [-resolve] thread [text]
 	review resolve thread...
@@ -87,6 +88,8 @@ func main() {
 		cmdAdd(args[1:])
 	case "comments":
 		cmdComments(args[1:])
+	case "prune":
+		cmdPrune(args[1:])
 	case "publish":
 		cmdPublish(args[1:])
 	case "reply":
